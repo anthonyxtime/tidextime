@@ -1,21 +1,237 @@
+
+bash
+
+cat > /mnt/user-data/outputs/index.html << 'ENDOFFILE'
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
   <meta name="theme-color" content="#050e1c"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
   <title>TideTrack</title>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <style>body{margin:0;background:#050e1c}</style>
+  <style>html,body{margin:0;padding:0;background:#050e1c}</style>
 </head>
 <body>
   <div id="root"></div>
-  <script type="text/babel" src="TideTrack.jsx"></script>
   <script type="text/babel">
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<TideTrack/>);
-  </script>
-</body>
-</html>
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    const STATIONS = [
+      { region:"S. California", name:"Santa Monica Bay, CA",   id:"9410840", lat:33.998, lon:-118.497, buoy:"46025" },
+      { region:"S. California", name:"Los Angeles Harbor, CA", id:"9410660", lat:33.720, lon:-118.272, buoy:"46025" },
+      { region:"S. California", name:"Newport Beach, CA",      id:"9410580", lat:33.615, lon:-117.878, buoy:"46086" },
+      { region:"S. California", name:"San Diego, CA",          id:"9410170", lat:32.714, lon:-117.174, buoy:"46086" },
+      { region:"S. California", name:"Santa Barbara, CA",      id:"9411340", lat:34.408, lon:-119.685, buoy:"46054" },
+      { region:"N. California", name:"Santa Cruz, CA",         id:"9413745", lat:36.958, lon:-122.017, buoy:"46042" },
+      { region:"N. California", name:"Monterey, CA",           id:"9413450", lat:36.605, lon:-121.888, buoy:"46042" },
+      { region:"N. California", name:"San Francisco, CA",      id:"9414290", lat:37.807, lon:-122.465, buoy:"46026" },
+      { region:"N. California", name:"Crescent City, CA",      id:"9419750", lat:41.745, lon:-124.184, buoy:"46027" },
+      { region:"Pacific NW",    name:"Newport, OR",            id:"9435380", lat:44.625, lon:-124.049, buoy:"46050" },
+      { region:"Pacific NW",    name:"Astoria, OR",            id:"9439040", lat:46.207, lon:-123.769, buoy:"46027" },
+      { region:"Pacific NW",    name:"Westport, WA",           id:"9441102", lat:46.904, lon:-124.105, buoy:"46029" },
+      { region:"Pacific NW",    name:"Seattle, WA",            id:"9447130", lat:47.602, lon:-122.339, buoy:"46088" },
+      { region:"Hawaii",        name:"Honolulu, Oahu",         id:"1612340", lat:21.307, lon:-157.867, buoy:"51201" },
+      { region:"Hawaii",        name:"Hilo, Big Island",       id:"1617760", lat:19.730, lon:-155.060, buoy:"51206" },
+      { region:"Hawaii",        name:"Kahului, Maui",          id:"1615680", lat:20.895, lon:-156.473, buoy:"51201" },
+      { region:"Hawaii",        name:"Nawiliwili, Kauai",      id:"1611400", lat:21.954, lon:-159.356, buoy:"51001" },
+      { region:"East Coast",    name:"Montauk, NY",            id:"8510560", lat:41.049, lon:-71.957,  buoy:"44025" },
+      { region:"East Coast",    name:"New York, NY",           id:"8518750", lat:40.700, lon:-74.015,  buoy:"44025" },
+      { region:"East Coast",    name:"Virginia Beach, VA",     id:"8638610", lat:36.947, lon:-76.330,  buoy:"44014" },
+      { region:"East Coast",    name:"Cape Hatteras, NC",      id:"8654467", lat:35.214, lon:-75.690,  buoy:"41025" },
+      { region:"East Coast",    name:"Miami, FL",              id:"8723214", lat:25.768, lon:-80.133,  buoy:"41047" },
+      { region:"Gulf Coast",    name:"Galveston, TX",          id:"8771341", lat:29.310, lon:-94.793,  buoy:"42035" },
+    ];
+
+    const OVERLAYS = [
+      { id:"buoy",      label:"BUOY",       icon:"🔴", color:"#ff7a45", live:true  },
+      { id:"moon",      label:"MOON",       icon:"🌙", color:"#e8c040", live:true  },
+      { id:"wind",      label:"WIND",       icon:"💨", color:"#4af0a0", live:false, soon:true },
+      { id:"multibuoy", label:"MULTI-BUOY", icon:"📊", color:"#a0b4ff", live:false, soon:true },
+    ];
+
+    const Y_FIXED_MIN=-1, Y_FIXED_MAX=7;
+    const Y_FIXED_TICKS=[-1,0,1,2,3,4,5,6,7];
+
+    function getMoonPhase(date){
+      const known=new Date(2000,0,6,18,14,0),cycle=29.530588853;
+      return(((date-known)/86400000)%cycle+cycle)%cycle;
+    }
+    const MOON_TABLE=[[1.85,"🌑","New Moon"],[5.54,"🌒","Waxing Crescent"],[9.22,"🌓","First Quarter"],[12.91,"🌔","Waxing Gibbous"],[16.61,"🌕","Full Moon"],[20.30,"🌖","Waning Gibbous"],[23.99,"🌗","Last Quarter"],[99,"🌘","Waning Crescent"]];
+    function moonInfo(p){return MOON_TABLE.find(([m])=>p<m)||MOON_TABLE[7];}
+
+    function getSunTimes(lat,lon,date){
+      const toR=d=>d*Math.PI/180;
+      const N=Math.floor((date-new Date(date.getFullYear(),0,0))/86400000);
+      const B=toR(360/365*(N-81));
+      const EqT=9.87*Math.sin(2*B)-7.53*Math.cos(B)-1.5*Math.sin(B);
+      const decl=toR(23.45*Math.sin(toR(360/365*(N-81))));
+      const latR=toR(lat);
+      const noon=720-4*lon-EqT-date.getTimezoneOffset();
+      const hs=alt=>{const c=(Math.sin(toR(alt))-Math.sin(latR)*Math.sin(decl))/(Math.cos(latR)*Math.cos(decl));return(c>=1||c<=-1)?null:Math.acos(c)*(180/Math.PI)*4;};
+      const sr=hs(-0.833),ct=hs(-6);
+      if(!sr)return{firstLight:0,sunrise:0,sunset:1440,lastLight:1440};
+      return{firstLight:Math.round(noon-(ct??sr+30)),sunrise:Math.round(noon-sr),sunset:Math.round(noon+sr),lastLight:Math.round(noon+(ct??sr+30))};
+    }
+
+    function interpTide(pts,min){
+      if(!pts?.length)return 0;
+      if(min<=pts[0].t_minutes)return pts[0].v;
+      if(min>=pts[pts.length-1].t_minutes)return pts[pts.length-1].v;
+      let i=0;while(i<pts.length-1&&pts[i+1].t_minutes<min)i++;
+      const p0=pts[Math.max(0,i-1)],p1=pts[i],p2=pts[i+1],p3=pts[Math.min(pts.length-1,i+2)];
+      const t=(min-p1.t_minutes)/(p2.t_minutes-p1.t_minutes),t2=t*t,t3=t2*t;
+      return 0.5*(2*p1.v+(-p0.v+p2.v)*t+(2*p0.v-5*p1.v+4*p2.v-p3.v)*t2+(-p0.v+3*p1.v-3*p2.v+p3.v)*t3);
+    }
+
+    const ftToM=v=>v*0.3048,cvt=(v,m)=>m?ftToM(v):v;
+    const fmtV=(v,m)=>cvt(v,m).toFixed(2),fmtVs=(v,m)=>`${cvt(v,m).toFixed(1)} ${m?"m":"ft"}`,uLbl=m=>m?"m":"ft";
+    function fmtMin(min,short=false){const h=Math.floor(min/60)%24,mm=Math.round(min%60),ap=h>=12?"PM":"AM";return short?`${h%12||12}:${String(mm).padStart(2,"0")}${ap.toLowerCase()}`:`${h%12||12}:${String(mm).padStart(2,"0")} ${ap}`;}
+    const nowLocal=()=>new Date().toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",hour12:true});
+    const nowUTC=()=>{const d=new Date();return`${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")} UTC`;};
+
+    const VW=400,VH=210,PAD={t:22,b:26,l:40,r:10},CW=VW-PAD.l-PAD.r,CH=VH-PAD.t-PAD.b;
+    const xOf=min=>PAD.l+(min/1440)*CW;
+    const HTICKS=[0,3,6,9,12,15,18,21],HLBLS=["12am","3am","6am","9am","Noon","3pm","6pm","9pm"];
+    const DEMO=[{t_minutes:327,v:4.3,type:"H"},{t_minutes:745,v:-0.2,type:"L"},{t_minutes:1152,v:4.3,type:"H"}];
+
+    function TideTrack(){
+      const [stIdx,setStIdx]=useState(0);
+      const [hiLos,setHiLos]=useState(null);
+      const [loading,setLoading]=useState(true);
+      const [isDemo,setIsDemo]=useState(false);
+      const [cursor,setCursor]=useState(null);
+      const [metric,setMetric]=useState(false);
+      const [expanded,setExpanded]=useState(false);
+      const [overlays,setOverlays]=useState({buoy:true,moon:true});
+      const [showPicker,setShowPicker]=useState(false);
+      const [,forceClk]=useState(0);
+      const svgRef=useRef(null),dragging=useRef(false),pendingMin=useRef(null),rafId=useRef(null);
+      const station=STATIONS[stIdx],today=new Date();
+      const nowMin=today.getHours()*60+today.getMinutes();
+      const sun=getSunTimes(station.lat,station.lon,today);
+      const phase=getMoonPhase(today);
+      const [,moonEmoji,moonName]=moonInfo(phase);
+      const isSpring=phase<3||phase>27||(phase>13&&phase<17);
+
+      useEffect(()=>{const id=setInterval(()=>forceClk(n=>n+1),30000);return()=>clearInterval(id);},[]);
+
+      useEffect(()=>{
+        setLoading(true);setHiLos(null);setCursor(null);setExpanded(false);
+        const d=today.toISOString().slice(0,10).replace(/-/g,"");
+        const url=`https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?begin_date=${d}&end_date=${d}&station=${station.id}&product=predictions&datum=MLLW&time_zone=lst_ldt&interval=hilo&units=english&application=tidetrack&format=json`;
+        fetch(url).then(r=>r.json()).then(data=>{
+          if(data.predictions){setHiLos(data.predictions.map(p=>{const[hh,mm]=p.t.split(" ")[1].split(":").map(Number);return{t_minutes:hh*60+mm,v:parseFloat(p.v),type:p.type};}));setIsDemo(false);}
+          else{setHiLos(DEMO);setIsDemo(true);}
+          setLoading(false);
+        }).catch(()=>{setHiLos(DEMO);setIsDemo(true);setLoading(false);});
+      },[stIdx]);
+
+      const dataMin=hiLos?Math.min(...hiLos.map(h=>h.v)):0,dataMax=hiLos?Math.max(...hiLos.map(h=>h.v)):5;
+      const needsExpand=dataMin<Y_FIXED_MIN+0.1||dataMax>Y_FIXED_MAX-0.1;
+      const yMin=expanded?dataMin-0.8:Y_FIXED_MIN,yMax=expanded?dataMax+0.8:Y_FIXED_MAX,yRange=yMax-yMin;
+      let yTicks;
+      if(!expanded){yTicks=Y_FIXED_TICKS;}else{const step=yRange>16?4:yRange>8?2:1;yTicks=[];for(let v=Math.ceil(yMin/step)*step;v<=yMax;v+=step)yTicks.push(v);}
+      const yOf=v=>PAD.t+CH-((v-yMin)/yRange)*CH;
+
+      const curve=hiLos?Array.from({length:289},(_,i)=>({min:i*5,v:interpTide(hiLos,i*5)})):[];
+      const pathD=curve.length?"M "+curve.map(p=>`${xOf(p.min).toFixed(1)},${yOf(p.v).toFixed(1)}`).join(" L "):"";
+      const areaD=pathD?`${pathD} L ${xOf(1440)},${yOf(yMin)} L ${xOf(0)},${yOf(yMin)} Z`:"";
+      const selMin=cursor??nowMin,selV=hiLos?interpTide(hiLos,selMin):0;
+      const nextHL=hiLos?.find(p=>p.t_minutes>nowMin);
+      const ct=PAD.t,cb=VH-PAD.b;
+      const{firstLight,sunrise,sunset,lastLight}=sun;
+
+      const calcMin=useCallback(e=>{
+        const svg=svgRef.current;if(!svg)return null;
+        const rect=svg.getBoundingClientRect();
+        const cx=e.touches?e.touches[0].clientX:e.clientX;
+        const frac=((cx-rect.left)/rect.width*VW-PAD.l)/CW;
+        return Math.max(0,Math.min(1440,Math.round(frac*1440)));
+      },[]);
+      const scheduleSet=useCallback(min=>{
+        pendingMin.current=min;
+        if(rafId.current)return;
+        rafId.current=requestAnimationFrame(()=>{setCursor(pendingMin.current);rafId.current=null;});
+      },[]);
+      const onDown=useCallback(e=>{dragging.current=true;e.currentTarget.setPointerCapture(e.pointerId);scheduleSet(calcMin(e));},[calcMin,scheduleSet]);
+      const onMove=useCallback(e=>{if(!dragging.current)return;scheduleSet(calcMin(e));},[calcMin,scheduleSet]);
+      const onUp=useCallback(()=>{dragging.current=false;},[]);
+      const toggleOv=id=>setOverlays(p=>({...p,[id]:!p[id]}));
+      const regions=[...new Set(STATIONS.map(s=>s.region))];
+
+      return(
+        <div style={{background:"linear-gradient(170deg,#050e1c 0%,#081628 60%,#050d1a 100%)",minHeight:"100vh",color:"#c8e0f8",fontFamily:"'DM Mono','Courier New',monospace",maxWidth:440,margin:"0 auto",paddingBottom:60}}>
+          <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@600;700;800&display=swap');*{box-sizing:border-box}::-webkit-scrollbar{width:3px;background:transparent}::-webkit-scrollbar-thumb{background:rgba(42,143,255,.18);border-radius:2px}@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}.fi{animation:fadeUp .3s ease both}button{transition:border-color .15s,background .15s,color .15s,transform .1s}button:active{transform:scale(.97)}`}</style>
+
+          <div style={{padding:"18px 16px 12px",borderBottom:"1px solid rgba(100,180,255,.06)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div>
+                <div style={{fontFamily:"'Syne',sans-serif",fontSize:22,fontWeight:800,letterSpacing:-0.5,color:"#e0f0ff",lineHeight:1}}>TIDE<span style={{color:"#2a8fff"}}>TRACK</span></div>
+                <div style={{fontSize:9,color:"#1a3a60",letterSpacing:1.5,marginTop:3,textTransform:"uppercase"}}>{today.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric",year:"numeric"})}</div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontFamily:"'Syne',sans-serif",fontSize:15,fontWeight:700,color:"#80b0d8"}}>{nowLocal()}</div>
+                <div style={{fontSize:9,color:"#1a3a60",marginTop:2,letterSpacing:.5}}>{nowUTC()}</div>
+              </div>
+            </div>
+            <div style={{marginTop:10,position:"relative"}}>
+              <button onClick={()=>setShowPicker(v=>!v)} style={{width:"100%",padding:"7px 12px",borderRadius:8,border:"1px solid rgba(42,143,255,.2)",background:"rgba(42,143,255,.05)",color:"#80b0d8",fontSize:11,cursor:"pointer",fontFamily:"inherit",display:"flex",justifyContent:"space-between",alignItems:"center",letterSpacing:.3}}>
+                <span>📍 {station.name}</span>
+                <span style={{color:"#2a8fff",fontSize:9,letterSpacing:1}}>{showPicker?"▲ CLOSE":"▼ CHANGE"}</span>
+              </button>
+              {showPicker&&(
+                <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,zIndex:50,background:"#071420",border:"1px solid rgba(42,143,255,.14)",borderRadius:8,maxHeight:250,overflowY:"auto",boxShadow:"0 12px 40px rgba(0,0,0,.75)"}}>
+                  {regions.map(region=>(
+                    <div key={region}>
+                      <div style={{padding:"6px 12px 2px",fontSize:8,color:"#1a3a60",letterSpacing:1.5,textTransform:"uppercase",borderTop:"1px solid rgba(42,143,255,.06)"}}>{region}</div>
+                      {STATIONS.map((s,idx)=>s.region!==region?null:(
+                        <button key={s.id} onClick={()=>{setStIdx(idx);setShowPicker(false);}} style={{width:"100%",padding:"7px 12px 7px 16px",border:"none",textAlign:"left",cursor:"pointer",fontFamily:"inherit",fontSize:11,background:idx===stIdx?"rgba(42,143,255,.12)":"transparent",color:idx===stIdx?"#2a8fff":"#4a6a90",borderLeft:`2px solid ${idx===stIdx?"#2a8fff":"transparent"}`}}>{s.name}</button>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {isDemo&&<div style={{marginTop:7,fontSize:9,color:"#c9a227",background:"rgba(201,162,39,.08)",display:"inline-block",padding:"2px 8px",borderRadius:4,letterSpacing:.3}}>⚠ DEMO DATA — NOAA fetch failed</div>}
+          </div>
+
+          {loading?<div style={{textAlign:"center",padding:60,color:"#1e3a60",letterSpacing:2,fontSize:11}}>FETCHING NOAA DATA…</div>:(<>
+
+            <div className="fi" style={{padding:"14px 16px 0"}}>
+              <div style={{fontSize:9,color:"#1a3a60",letterSpacing:2,textTransform:"uppercase"}}>{cursor===null?"Now · ":"At · "}<span style={{color:"#4a8abf"}}>{fmtMin(selMin)}</span>{cursor!==null&&<span style={{fontSize:8,color:"#1a3060",marginLeft:6}}>station local</span>}</div>
+              <div style={{display:"flex",alignItems:"baseline",gap:6,marginTop:3,flexWrap:"wrap"}}>
+                <span style={{fontFamily:"'Syne',sans-serif",fontSize:52,fontWeight:800,lineHeight:1,color:selV>0?"#2a8fff":"#ff5050",textShadow:`0 0 40px ${selV>0?"rgba(42,143,255,.28)":"rgba(255,80,80,.28)"}`}}>{fmtV(selV,metric)}</span>
+                <div style={{marginBottom:4}}><div style={{fontSize:16,color:"#1a4a70",fontFamily:"'Syne',sans-serif",fontWeight:700}}>{uLbl(metric)}</div><div style={{fontSize:8,color:"#1a3a60",letterSpacing:.5}}>MLLW</div></div>
+                <div style={{display:"flex",gap:6,marginLeft:"auto",alignItems:"center"}}>
+                  {cursor!==null&&<button onClick={()=>setCursor(null)} style={{padding:"3px 9px",borderRadius:6,border:"1px solid rgba(42,143,255,.3)",background:"rgba(42,143,255,.1)",color:"#2a8fff",fontSize:9,cursor:"pointer",fontFamily:"inherit",letterSpacing:.5}}>← NOW</button>}
+                  <button onClick={()=>setMetric(v=>!v)} style={{padding:"3px 9px",borderRadius:6,border:"1px solid rgba(255,255,255,.08)",background:"rgba(255,255,255,.03)",color:"#2a6090",fontSize:9,cursor:"pointer",fontFamily:"inherit",letterSpacing:.5}}>{metric?"→ FT":"→ M"}</button>
+                </div>
+              </div>
+              {nextHL&&<div style={{fontSize:10,color:"#1a4a70",marginTop:1}}>{nextHL.type==="H"?"▲ High":"▼ Low"} {fmtVs(nextHL.v,metric)} at {fmtMin(nextHL.t_minutes)} · {Math.floor((nextHL.t_minutes-nowMin)/60)}h {(nextHL.t_minutes-nowMin)%60}m away</div>}
+            </div>
+
+            <div className="fi" style={{padding:"8px 4px 0",animationDelay:"40ms"}}>
+              {needsExpand&&(<div style={{textAlign:"right",paddingRight:12,marginBottom:2}}><button onClick={()=>setExpanded(v=>!v)} style={{padding:"2px 10px",borderRadius:5,fontSize:8,border:`1px solid ${expanded?"#ff7a45":"rgba(255,122,69,.3)"}`,background:expanded?"rgba(255,122,69,.15)":"rgba(255,122,69,.04)",color:expanded?"#ff7a45":"#5a3020",cursor:"pointer",fontFamily:"inherit",letterSpacing:.8}}>{expanded?"▼ FIX Y-AXIS":"▲ EXPAND Y-AXIS"}</button></div>)}
+              <svg ref={svgRef} viewBox={`0 0 ${VW} ${VH}`} style={{width:"100%",display:"block",cursor:"crosshair",touchAction:"none",userSelect:"none"}} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp}>
+                <defs>
+                  <linearGradient id="tideArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2a8fff" stopOpacity="0.45"/><stop offset="60%" stopColor="#2a8fff" stopOpacity="0.08"/><stop offset="100%" stopColor="#2a8fff" stopOpacity="0"/></linearGradient>
+                  <linearGradient id="dawnGrad" gradientUnits="userSpaceOnUse" x1={xOf(firstLight)} y1="0" x2={xOf(sunrise)} y2="0"><stop offset="0%" stopColor="#020608"/><stop offset="100%" stopColor="#0b1e38"/></linearGradient>
+                  <linearGradient id="duskGrad" gradientUnits="userSpaceOnUse" x1={xOf(sunset)} y1="0" x2={xOf(lastLight)} y2="0"><stop offset="0%" stopColor="#0b1e38"/><stop offset="100%" stopColor="#020608"/></linearGradient>
+                  <filter id="lineglow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+                </defs>
+                <rect x={PAD.l} y={ct} width={CW} height={CH} fill="#020608"/>
+                {sunrise<sunset&&<rect x={xOf(Math.max(sunrise,0))} y={ct} width={xOf(Math.min(sunset,1440))-xOf(Math.max(sunrise,0))} height={CH} fill="#0b1e38"/>}
+                {firstLight<sunrise&&firstLight>=0&&<rect x={xOf(Math.max(firstLight,0))} y={ct} width={xOf(sunrise)-xOf(Math.max(firstLight,0))} height={CH} fill="url(#dawnGrad)"/>}
+                {sunset<lastLight&&sunset<1440&&<rect x={xOf(sunset)} y={ct} width={xOf(Math.min(lastLight,1440))-xOf(sunset)} height={CH} fill="url(#duskGrad)"/>}
+                {[firstLight,sunrise,sunset,lastLight].filter(m=>m>0&&m<1440).map((m,i)=><line key={i} x1={xOf(m)} y1={ct} x2={xOf(m)} y2={cb} stroke="rgba(255,200,100,.09)" strokeWidth="1" strokeDasharray="2,4"/>)}
+                {HTICKS.map(h=><line key={h} x1={xOf(h*60)} y1={ct} x2={xOf(h*60)} y2={cb} stroke="rgba(42,143,255,.06)" strokeWidth="1"/>)}
+                {yTicks.map(v=><line key={v} x1={PAD.l} y1={yOf(v)} x2={VW-PAD.r} y2={yOf(v)} stroke={v===0?"rgba(255,80,80,.2)":"rgba(42,143,255,.07)"} strokeWidth="1" strokeDasharray={v===0?"4,3":"none"}/>)}
+                {areaD&&<path d={areaD} fill="url(#tideArea)"/>}
+                {pathD&&<path d={pathD} fill="none" stroke="#2a8fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#lineglow)"/>}
+                {hiLos?.map((hl,i)=>{const cx=xOf(hl.t_minutes),cy=yOf(hl.v),hi=hl.type==="H";if(h
