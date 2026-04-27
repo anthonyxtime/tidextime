@@ -230,4 +230,65 @@
                 {yTicks.map(v=><line key={v} x1={PAD.l} y1={yOf(v)} x2={VW-PAD.r} y2={yOf(v)} stroke={v===0?"rgba(255,80,80,.2)":"rgba(42,143,255,.07)"} strokeWidth="1" strokeDasharray={v===0?"4,3":"none"}/>)}
                 {areaD&&<path d={areaD} fill="url(#tideArea)"/>}
                 {pathD&&<path d={pathD} fill="none" stroke="#2a8fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#lineglow)"/>}
-                {hiLos?.map((hl,i)=>{const cx=xOf(hl.t_minutes),cy=yOf(hl.v),hi=hl.type==="H";if(hl.v<yMin||hl.v>yMax)return null;return(<g key={i}><circle cx={
+                {hiLos?.map((hl,i)=>{const cx=xOf(hl.t_minutes),cy=yOf(hl.v),hi=hl.type==="H";if(hl.v<yMin||hl.v>yMax)return null;return(<g key={i}><circle cx={cx} cy={cy} r="4.5" fill={hi?"#2a8fff":"#030a14"} stroke="#2a8fff" strokeWidth="2"/><text x={cx} y={hi?cy-10:cy+17} textAnchor="middle" fill="#5ab0ff" fontSize="9.5" fontWeight="500">{fmtVs(hl.v,metric)}</text><text x={cx} y={hi?cy-20:cy+27} textAnchor="middle" fill="#1a3a60" fontSize="8.5">{fmtMin(hl.t_minutes,true)}</text></g>);})}
+                <line x1={xOf(selMin)} y1={ct} x2={xOf(selMin)} y2={cb} stroke="rgba(255,255,255,.2)" strokeWidth="1" strokeDasharray="3,2"/>
+                {(()=>{const rawY=yOf(selV),cy=Math.max(ct+4,Math.min(cb-4,rawY));return<circle cx={xOf(selMin)} cy={cy} r="6" fill="#ffffff" stroke="#2a8fff" strokeWidth="2.5" style={{filter:"drop-shadow(0 0 5px rgba(42,143,255,.9))"}}/>;})()}
+                {cursor===null&&<text x={xOf(nowMin)} y={ct-5} textAnchor="middle" fill="#2a8fff" fontSize="7" fontWeight="600" letterSpacing="1.5">NOW</text>}
+                {HTICKS.map((h,i)=><text key={h} x={xOf(h*60)} y={VH-PAD.b+14} textAnchor="middle" fill="#1a3a60" fontSize="8">{HLBLS[i]}</text>)}
+                {yTicks.map(v=><text key={v} x={PAD.l-5} y={yOf(v)+3} textAnchor="end" fill="#1a3a60" fontSize="8">{v}</text>)}
+                <text x={PAD.l-5} y={PAD.t-6} textAnchor="end" fill="#1a3060" fontSize="7">{uLbl(metric)}</text>
+              </svg>
+              <div style={{display:"flex",justifyContent:"space-between",padding:"0 8px",marginTop:-2}}>
+                <div style={{fontSize:8,color:"#0d2035",letterSpacing:1}}>◀ DRAG TO EXPLORE ▶</div>
+                <div style={{fontSize:8,color:"#0d2035",letterSpacing:.5}}>Station local · MLLW</div>
+              </div>
+            </div>
+
+            <div className="fi" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,padding:"12px 14px",animationDelay:"80ms"}}>
+              {OVERLAYS.map(ov=>{const on=!!overlays[ov.id];return(<button key={ov.id} onClick={()=>ov.live&&toggleOv(ov.id)} style={{padding:"8px 4px",borderRadius:9,border:"1px solid",borderColor:!ov.live?"rgba(255,255,255,.03)":on?ov.color:"rgba(255,255,255,.07)",background:!ov.live?"rgba(255,255,255,.01)":on?`${ov.color}1a`:"rgba(255,255,255,.02)",color:!ov.live?"#0e2030":on?ov.color:"#1e4060",fontSize:9,fontWeight:500,cursor:ov.live?"pointer":"default",letterSpacing:.8,fontFamily:"inherit"}}><span style={{fontSize:16,display:"block",marginBottom:2}}>{ov.icon}</span>{ov.label}{ov.soon&&<span style={{display:"block",fontSize:7,marginTop:1,color:"#0e2030",letterSpacing:.5}}>COMING SOON</span>}</button>);})}
+            </div>
+
+            {overlays.buoy&&(
+              <div className="fi" style={{margin:"0 14px 10px",borderRadius:12,padding:14,border:"1px solid rgba(255,122,69,.12)",background:"rgba(255,122,69,.025)",animationDelay:"100ms"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                  <span style={{fontFamily:"'Syne',sans-serif",fontSize:12,fontWeight:700,color:"#ff7a45",letterSpacing:.3}}>🔴 NDBC BUOY {station.buoy}</span>
+                  <span style={{fontSize:8,color:"#4a2010",letterSpacing:.5}}>DEMO · 8:00 AM</span>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  {[{l:"WAVE HEIGHT",v:metric?"0.70 m":"2.3 ft",n:"Significant"},{l:"PERIOD",v:"12 s",n:"Dominant"},{l:"DIRECTION",v:"WNW",n:"Swell from"},{l:"WATER TEMP",v:metric?"16.7 °C":"62 °F",n:"Surface"}].map(item=>(<div key={item.l} style={{background:"rgba(0,0,0,.22)",borderRadius:8,padding:"9px 11px"}}><div style={{fontSize:8,color:"#4a2010",letterSpacing:1.2}}>{item.l}</div><div style={{fontFamily:"'Syne',sans-serif",fontSize:21,fontWeight:700,color:"#ffd0b0",marginTop:2}}>{item.v}</div><div style={{fontSize:8,color:"#4a2010"}}>{item.n}</div></div>))}
+                </div>
+                <div style={{marginTop:8,fontSize:9,color:"#3a1808",textAlign:"center",letterSpacing:.3}}>Live NDBC data on GitHub Pages · readings accumulate as day progresses</div>
+              </div>
+            )}
+
+            {overlays.moon&&(
+              <div className="fi" style={{margin:"0 14px 10px",borderRadius:12,padding:14,border:"1px solid rgba(232,192,64,.1)",background:"rgba(232,192,64,.02)",animationDelay:"130ms"}}>
+                <div style={{fontFamily:"'Syne',sans-serif",fontSize:12,fontWeight:700,color:"#e8c040",marginBottom:12,letterSpacing:.3}}>🌙 MOON &amp; TIDAL INFLUENCE</div>
+                <div style={{display:"flex",gap:14,alignItems:"center"}}>
+                  <div style={{fontSize:52,lineHeight:1,filter:"drop-shadow(0 0 8px rgba(232,192,64,.28))"}}>{moonEmoji}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontFamily:"'Syne',sans-serif",fontSize:18,fontWeight:800,color:"#f0d870"}}>{moonName}</div>
+                    <div style={{fontSize:10,color:"#6a5020",marginTop:2}}>Day {Math.round(phase)} of 29.5-day cycle</div>
+                    <div style={{marginTop:7,display:"inline-block",padding:"3px 9px",borderRadius:20,fontSize:9,fontWeight:500,letterSpacing:.3,background:isSpring?"rgba(232,192,64,.15)":"rgba(42,143,255,.1)",color:isSpring?"#e8c040":"#2a8fff"}}>{isSpring?"⚡ SPRING TIDES — LARGER RANGE":"〰 NEAP TIDES — SMALLER RANGE"}</div>
+                  </div>
+                </div>
+                <div style={{marginTop:10,fontSize:10,color:"#6a5020",lineHeight:1.7}}>{isSpring?"Sun and moon aligned — tidal forces amplified. Expect higher highs and lower lows than average.":"Sun and moon at 90° — tidal forces partially cancel. Reduced tidal range this cycle."}</div>
+              </div>
+            )}
+
+            <div className="fi" style={{margin:"0 14px",borderRadius:12,padding:"12px 14px",border:"1px solid rgba(255,255,255,.04)",background:"rgba(255,255,255,.01)",animationDelay:"160ms"}}>
+              <div style={{fontFamily:"'Syne',sans-serif",fontSize:11,fontWeight:700,color:"#b89020",marginBottom:10,letterSpacing:.3}}>☀ DAYLIGHT · {station.name.split(",")[0].toUpperCase()}</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                {[{icon:"🌤",lbl:"First Light",min:firstLight},{icon:"🌅",lbl:"Sunrise",min:sunrise},{icon:"🌇",lbl:"Sunset",min:sunset},{icon:"🌆",lbl:"Last Light",min:lastLight}].map(s=>(<div key={s.lbl} style={{display:"flex",alignItems:"center",gap:9}}><span style={{fontSize:20}}>{s.icon}</span><div><div style={{fontSize:8,color:"#1a3a60",letterSpacing:.8}}>{s.lbl}</div><div style={{fontFamily:"'Syne',sans-serif",fontSize:13,fontWeight:700,color:"#7090b8"}}>{fmtMin(s.min)}</div></div></div>))}
+              </div>
+            </div>
+
+          </>)}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<TideTrack/>);
+  </script>
+</body>
+</html>
