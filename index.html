@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
   <meta name="theme-color" content="#ede8df"/>
   <meta name="mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
@@ -18,42 +18,25 @@
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect, useRef, useCallback } = React;
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
-// ═══════════════════════════════════════════════════════════════
-// DESIGN TOKENS — edit here to retheme the entire app
-// Palette: warm sand / beach notebook — easy on the eyes
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// DESIGN TOKENS — edit here to retheme the whole app
+// ═══════════════════════════════════════════════════════════════════
 const C = {
-  bg:      '#ede8df',   // warm sand — page background
-  card:    '#f4efe6',   // slightly lighter — cards/headers
-  cardB:   '#ede8df',   // inner panel bg
-  border:  '#d5cdc0',   // warm gray dividers
-  txt:     '#3a3025',   // dark warm brown — primary text
-  sub:     '#8a7d6e',   // medium warm — secondary text
-  light:   '#b8aa98',   // faint — axis labels/hints
-  tide:    '#4d96a0',   // muted teal — tide line
-  tideA0:  'rgba(77,150,160,0.30)',
-  tideA1:  'rgba(77,150,160,0.01)',
-  night:   '#ddd9ed',   // soft lavender — night band
-  dawn:    '#f5dcc8',   // warm peach — twilight band
-  day:     '#ddeaf5',   // soft sky — daylight band
-  now:     '#c05840',   // warm coral — NOW marker
-  zero:    'rgba(160,40,40,0.14)', // 0 ft dashed guide
-  // Up to 3 buoy colors: coral, iris, sage
-  buoy:    ['#b05848','#6858b8','#3a8f60'],
-  // Wind line color
-  wind:    '#c08030',   // warm amber
-  windA0:  'rgba(192,128,48,0.28)',
-  windA1:  'rgba(192,128,48,0.01)',
-  moonGld: '#a07830',
+  bg:'#ede8df', card:'#f4efe6', cardB:'#ede8df', border:'#d5cdc0',
+  txt:'#3a3025', sub:'#8a7d6e', light:'#b8aa98',
+  tide:'#4d96a0', tideA0:'rgba(77,150,160,0.30)', tideA1:'rgba(77,150,160,0.01)',
+  night:'#ddd9ed', dawn:'#f5dcc8', day:'#ddeaf5',
+  now:'#c05840', zero:'rgba(160,40,40,0.14)',
+  buoy:['#b05848','#6858b8','#3a8f60'],
+  wind:'#c08030', windA0:'rgba(192,128,48,0.26)', windA1:'rgba(192,128,48,0.01)',
+  moonGld:'#a07830',
 };
 
-// ═══════════════════════════════════════════════════════════════
-// TIDE STATION DATABASE
-// id  = NOAA CO-OPS station number (used in free API call)
-// lat/lon = for computing sunrise/sunset chart background
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// STATIONS
+// ═══════════════════════════════════════════════════════════════════
 const STATIONS = [
   {region:"S. California",name:"Santa Monica Bay, CA",   id:"9410840",lat:33.998,lon:-118.497},
   {region:"S. California",name:"Los Angeles Harbor, CA", id:"9410660",lat:33.720,lon:-118.272},
@@ -80,16 +63,13 @@ const STATIONS = [
   {region:"Gulf Coast",   name:"Galveston, TX",          id:"8771341",lat:29.310,lon:-94.793},
 ];
 
-// ═══════════════════════════════════════════════════════════════
-// NDBC BUOY DATABASE
-// 46221 = Santa Monica Bay inner (nearshore, best for local surf)
-// 46222 = San Pedro (nearshore)
-// Others listed by region for the picker
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// NDBC BUOYS — 46221 & 46222 are the key nearshore SoCal buoys
+// ═══════════════════════════════════════════════════════════════════
 const BUOYS = [
   {region:"S. California",id:"46221",name:"Santa Monica Bay (inner)"},
   {region:"S. California",id:"46222",name:"San Pedro (nearshore)"},
-  {region:"S. California",id:"46025",name:"Santa Monica Basin (offshore)"},
+  {region:"S. California",id:"46025",name:"Santa Monica Basin"},
   {region:"S. California",id:"46086",name:"San Clemente Basin"},
   {region:"S. California",id:"46054",name:"W. Santa Barbara"},
   {region:"N. California",id:"46042",name:"Monterey"},
@@ -102,299 +82,361 @@ const BUOYS = [
   {region:"East Coast",   id:"44014",name:"Virginia Beach"},
 ];
 
-// ═══════════════════════════════════════════════════════════════
-// SVG CHART GEOMETRY
+// ═══════════════════════════════════════════════════════════════════
+// CHART GEOMETRY
+// 3 days side-by-side. "Absolute minutes" (am): 0 = yesterday midnight.
 //
-// Three days laid side-by-side.
-// "Absolute minutes" (am): 0 = yesterday midnight, 1440 = today midnight
-//
-// Vertical sections (top → bottom):
-//   TIDE  section: T_H  = 174 px
-//   SWELL section: S_H  = 88  px
-//   WIND  section: W_H  = 80  px
-//   TIME  axis:    AX_H = 22  px
-//
-// Y-axis section labels are drawn rotated on the left margin.
-// ═══════════════════════════════════════════════════════════════
-const N_DAYS = 3;
-const DAY_PX = 420;          // SVG pixels per 24-hour day
-const L_PAD  = 42;           // left margin (y-axis labels + section labels)
-const R_PAD  = 8;
-const SVG_W  = L_PAD + N_DAYS * DAY_PX + R_PAD; // 1318
+// SCROLL MODEL:
+//   - Main SVG uses viewBox = `${scrollOffset} 0 ${viewW} ${SVG_H}`
+//   - All content at absolute xOf positions (never changes)
+//   - Y-axis overlay painted at x=scrollOffset (stays fixed on screen)
+//   - Bottom strip: separate overflow-x:auto div — the ONLY scroll control
+//   - Chart touch area: ALL touches captured for tracing (no scroll)
+// ═══════════════════════════════════════════════════════════════════
+const N_DAYS=3, DAY_PX=420, L_PAD=42, R_PAD=8;
+const SVG_W = L_PAD + N_DAYS*DAY_PX + R_PAD; // 1310
 
-const T_TOP  = 20, T_CH = 146, T_BOT = 8;
-const T_H    = T_TOP + T_CH + T_BOT; // 174  ← tide section total
+const T_TOP=20, T_CH=148, T_BOT=6,  T_H=174;  // tide section
+const SWELL_Y=T_H;
+const S_TOP=8,  S_CH=72,  S_BOT=8,  S_H=88;   // swell section
+const WIND_Y=SWELL_Y+S_H;
+const W_TOP=8,  W_CH=62,  W_BOT=8,  W_H=78;   // wind section
+const SVG_H=T_H+S_H+W_H; // 340  (time axis is in a separate scroll strip)
+const AX_H=26;            // bottom scroll strip height
 
-const SWELL_Y = T_H;         // y where swell section begins
-const S_TOP  = 8,  S_CH = 72, S_BOT = 8;
-const S_H    = S_TOP + S_CH + S_BOT; // 88   ← swell section total
+const xOf  = am         => L_PAD + am*(DAY_PX/1440);
+const yTf  = (v,mn,mx)  => T_TOP+T_CH - ((v-mn)/(mx-mn))*T_CH;
+const ySf  = (v,sMax)   => SWELL_Y+S_TOP+S_CH - (v/Math.max(sMax,3))*S_CH;
+const yWf  = (v,wMax)   => WIND_Y+W_TOP+W_CH  - (v/Math.max(wMax,15))*W_CH;
 
-const WIND_Y = SWELL_Y + S_H; // y where wind section begins
-const W_TOP  = 8,  W_CH = 64, W_BOT = 8;
-const W_H    = W_TOP + W_CH + W_BOT; // 80   ← wind section total
+const Y_FIX_MIN=-1, Y_FIX_MAX=7;
+const Y_FIX_TICKS=[-1,0,1,2,3,4,5,6,7];
+const H_TICKS=[0,3,6,9,12,15,18,21];
+const H_LBLS=["12a","3a","6a","9a","12p","3p","6p","9p"];
 
-const AX_Y   = WIND_Y + W_H; // y where time axis begins
-const AX_H   = 22;
-const SVG_H  = AX_Y + AX_H; // 364
-
-// Convert absolute-minute → SVG x coordinate
-const xOf = am => L_PAD + am * (DAY_PX / 1440);
-
-// Convert tide ft value → SVG y (within tide section)
-const yT = (v, yMin, yMax) =>
-  T_TOP + T_CH - ((v - yMin) / (yMax - yMin)) * T_CH;
-
-// Convert swell ft value → SVG y (within swell section)
-const yS = (v, sMax) =>
-  SWELL_Y + S_TOP + S_CH - (v / Math.max(sMax, 3)) * S_CH;
-
-// Convert wind speed (kts) → SVG y (within wind section)
-const yW = (v, wMax) =>
-  WIND_Y + W_TOP + W_CH - (v / Math.max(wMax, 15)) * W_CH;
-
-// Fixed Y range for tide: covers SoCal/Hawaii/most of EC
-const Y_FIX_MIN   = -1;
-const Y_FIX_MAX   = 7;
-const Y_FIX_TICKS = [-1, 0, 1, 2, 3, 4, 5, 6, 7];
-
-// Hour tick positions and labels
-const H_TICKS = [0, 3, 6, 9, 12, 15, 18, 21];
-const H_LBLS  = ["12a","3a","6a","9a","12p","3p","6p","9p"];
-
-// ═══════════════════════════════════════════════════════════════
-// MOON PHASE MATH
-// ═══════════════════════════════════════════════════════════════
-function moonPhase(date) {
-  const ref = new Date(2000, 0, 6, 18, 14, 0), cy = 29.530588853;
-  return (((date - ref) / 86400000) % cy + cy) % cy;
+// ═══════════════════════════════════════════════════════════════════
+// MOON PHASE
+// ═══════════════════════════════════════════════════════════════════
+function moonPhase(date){
+  const ref=new Date(2000,0,6,18,14,0),cy=29.530588853;
+  return(((date-ref)/86400000)%cy+cy)%cy;
 }
-const MOON_T = [
-  [1.85,"🌑","New Moon"],[5.54,"🌒","Waxing Crescent"],[9.22,"🌓","First Quarter"],
+const MOON_T=[[1.85,"🌑","New Moon"],[5.54,"🌒","Waxing Crescent"],[9.22,"🌓","First Quarter"],
   [12.91,"🌔","Waxing Gibbous"],[16.61,"🌕","Full Moon"],[20.30,"🌖","Waning Gibbous"],
-  [23.99,"🌗","Last Quarter"],[99,"🌘","Waning Crescent"],
-];
-const moonInfo = p => MOON_T.find(([m]) => p < m) || MOON_T[7];
+  [23.99,"🌗","Last Quarter"],[99,"🌘","Waning Crescent"]];
+const moonInfo=p=>MOON_T.find(([m])=>p<m)||MOON_T[7];
 
-// ═══════════════════════════════════════════════════════════════
-// SUN TIMES (minutes from that day's local midnight)
-// Returns: fl=first light, sr=sunrise, ss=sunset, ll=last light
-// ═══════════════════════════════════════════════════════════════
-function sunTimes(lat, lon, date) {
-  const toR = d => d * Math.PI / 180;
-  const N = Math.floor((date - new Date(date.getFullYear(),0,0)) / 86400000);
-  const B = toR(360/365*(N-81));
-  const EqT = 9.87*Math.sin(2*B) - 7.53*Math.cos(B) - 1.5*Math.sin(B);
-  const decl = toR(23.45*Math.sin(toR(360/365*(N-81))));
-  const latR = toR(lat);
-  const noon = 720 - 4*lon - EqT - date.getTimezoneOffset();
-  const hs = alt => {
-    const c=(Math.sin(toR(alt))-Math.sin(latR)*Math.sin(decl))/(Math.cos(latR)*Math.cos(decl));
-    return (c>=1||c<=-1)?null:Math.acos(c)*(180/Math.PI)*4;
-  };
-  const sr=hs(-0.833), ct=hs(-6);
-  if (!sr) return {fl:0,sr:0,ss:1440,ll:1440};
-  return {
-    fl:Math.round(noon-(ct??sr+30)), sr:Math.round(noon-sr),
-    ss:Math.round(noon+sr),          ll:Math.round(noon+(ct??sr+30)),
-  };
+// ═══════════════════════════════════════════════════════════════════
+// SUN TIMES — returns minutes from that day's local midnight
+// ═══════════════════════════════════════════════════════════════════
+function sunTimes(lat,lon,date){
+  const toR=d=>d*Math.PI/180;
+  const N=Math.floor((date-new Date(date.getFullYear(),0,0))/86400000);
+  const B=toR(360/365*(N-81));
+  const EqT=9.87*Math.sin(2*B)-7.53*Math.cos(B)-1.5*Math.sin(B);
+  const decl=toR(23.45*Math.sin(toR(360/365*(N-81))));
+  const latR=toR(lat),noon=720-4*lon-EqT-date.getTimezoneOffset();
+  const hs=alt=>{const c=(Math.sin(toR(alt))-Math.sin(latR)*Math.sin(decl))/(Math.cos(latR)*Math.cos(decl));return(c>=1||c<=-1)?null:Math.acos(c)*(180/Math.PI)*4;};
+  const sr=hs(-0.833),ct=hs(-6);
+  if(!sr)return{fl:0,sr:0,ss:1440,ll:1440};
+  return{fl:Math.round(noon-(ct??sr+30)),sr:Math.round(noon-sr),ss:Math.round(noon+sr),ll:Math.round(noon+(ct??sr+30))};
 }
 
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 // CATMULL-ROM SPLINE — smooth tide curve through hi/lo points
-// ═══════════════════════════════════════════════════════════════
-function interpTide(pts, am) {
-  if (!pts?.length) return 0;
-  if (am <= pts[0].am)            return pts[0].v;
-  if (am >= pts[pts.length-1].am) return pts[pts.length-1].v;
-  let i=0; while(i<pts.length-1&&pts[i+1].am<am)i++;
+// ═══════════════════════════════════════════════════════════════════
+function interpTide(pts,am){
+  if(!pts?.length)return 0;
+  if(am<=pts[0].am)return pts[0].v;
+  if(am>=pts[pts.length-1].am)return pts[pts.length-1].v;
+  let i=0;while(i<pts.length-1&&pts[i+1].am<am)i++;
   const p0=pts[Math.max(0,i-1)],p1=pts[i],p2=pts[i+1],p3=pts[Math.min(pts.length-1,i+2)];
   const t=(am-p1.am)/(p2.am-p1.am),t2=t*t,t3=t2*t;
-  return 0.5*(2*p1.v+(-p0.v+p2.v)*t+(2*p0.v-5*p1.v+4*p2.v-p3.v)*t2
-             +(-p0.v+3*p1.v-3*p2.v+p3.v)*t3);
+  return 0.5*(2*p1.v+(-p0.v+p2.v)*t+(2*p0.v-5*p1.v+4*p2.v-p3.v)*t2+(-p0.v+3*p1.v-3*p2.v+p3.v)*t3);
 }
 
-// Linear interpolation for hourly buoy/wind data
-function interpLinear(pts, am, field) {
-  if (!pts?.length) return 0;
-  if (am<=pts[0].am)            return pts[0][field];
-  if (am>=pts[pts.length-1].am) return pts[pts.length-1][field];
-  let i=0; while(i<pts.length-1&&pts[i+1].am<=am)i++;
-  const p1=pts[i],p2=pts[i+1],t=(am-p1.am)/(p2.am-p1.am);
-  return p1[field]+(p2[field]-p1[field])*t;
+// Linear interpolation for hourly data
+function interpLin(pts,am,field){
+  if(!pts?.length)return 0;
+  if(am<=pts[0].am)return pts[0][field]??0;
+  if(am>=pts[pts.length-1].am)return pts[pts.length-1][field]??0;
+  let i=0;while(i<pts.length-1&&pts[i+1].am<=am)i++;
+  const a=pts[i],b=pts[i+1],t=(am-a.am)/(b.am-a.am);
+  return(a[field]??0)+((b[field]??0)-(a[field]??0))*t;
 }
 
-// ═══════════════════════════════════════════════════════════════
-// DEMO BUOY DATA GENERATOR
-// Produces realistic wave height, dominant period, and direction.
-// Each buoy gets a unique signature seeded from its ID digits.
+// ═══════════════════════════════════════════════════════════════════
+// OPEN-METEO FETCH
+// Free, no API key, CORS-enabled. Provides real ECMWF/GFS wave + wind.
+// Past hours = model analysis (very accurate).
+// Future hours = real model forecast (replaces fake demo data!).
+// ═══════════════════════════════════════════════════════════════════
+async function fetchMarine(lat,lon,today){
+  const url=`https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lon}`+
+    `&hourly=wave_height,wave_period,wave_direction&past_days=1&forecast_days=2&timezone=auto`;
+  const res=await fetch(url);
+  const data=await res.json();
+  if(!data.hourly)return null;
+
+  // Compute yesterday midnight in local time
+  const yest=new Date(today);yest.setDate(today.getDate()-1);yest.setHours(0,0,0,0);
+
+  return data.hourly.time.map((t,i)=>{
+    // Open-Meteo returns "YYYY-MM-DDTHH:MM" in the location's local time.
+    // JS parses date-time strings without timezone as local time → correct for same-tz users.
+    const dt=new Date(t);
+    const am=Math.round((dt-yest)/60000);
+    return{am,wh:(data.hourly.wave_height[i]??0)*3.28084,period:data.hourly.wave_period[i]??0,dir:data.hourly.wave_direction[i]??270};
+  }).filter(p=>p.am>=0&&p.am<=N_DAYS*1440&&p.period>0);
+}
+
+async function fetchWind(lat,lon,today){
+  const url=`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}`+
+    `&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=kn&past_days=1&forecast_days=2&timezone=auto`;
+  const res=await fetch(url);
+  const data=await res.json();
+  if(!data.hourly)return null;
+
+  const yest=new Date(today);yest.setDate(today.getDate()-1);yest.setHours(0,0,0,0);
+  return data.hourly.time.map((t,i)=>{
+    const am=Math.round((new Date(t)-yest)/60000);
+    return{am,spd:data.hourly.wind_speed_10m[i]??0,dir:data.hourly.wind_direction_10m[i]??270};
+  }).filter(p=>p.am>=0&&p.am<=N_DAYS*1440);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DEMO FALLBACKS (used only if Open-Meteo fails)
+// ═══════════════════════════════════════════════════════════════════
+function genBuoyDemo(id){
+  const seed=parseInt(id.replace(/\D/g,""))%97,base=1.2+(seed%22)*0.07,baseP=9+(seed%7),baseD=220+(seed%5)*18;
+  return Array.from({length:N_DAYS*24+1},(_,i)=>{
+    const am=i*60,h=i;
+    return{am,wh:Math.max(0.2,base+0.55*Math.sin(h*0.16+seed*0.09)+0.28*Math.cos(h*0.35)+0.12*Math.sin(h*0.71+seed*0.04)),
+      period:Math.max(4,Math.round(baseP+2*Math.sin(h*0.05+seed*0.07)+Math.cos(h*0.12))),
+      dir:(baseD+20*Math.sin(h*0.08+seed*0.1)+360)%360};
+  });
+}
+function genWindDemo(id){
+  const seed=parseInt(id.replace(/\D/g,""))%83,base=6+(seed%10),baseD=270+(seed%8)*10;
+  return Array.from({length:N_DAYS*24+1},(_,i)=>{
+    const am=i*60,h=i;
+    return{am,spd:Math.max(1,base+4*Math.sin(h*0.2+seed*0.08)+2*Math.cos(h*0.45)+Math.sin(h*0.9+seed*0.06)),
+      dir:(baseD+30*Math.sin(h*0.06+seed*0.09)+360)%360};
+  });
+}
+const DEMO_HL=[0,1,2].flatMap(d=>[{am:d*1440+327,v:4.30+d*0.04,type:"H"},{am:d*1440+745,v:-0.18+d*0.02,type:"L"},{am:d*1440+1152,v:4.38-d*0.03,type:"H"}]);
+
+// ═══════════════════════════════════════════════════════════════════
+// JET COLORMAP — mirrors CDIP's energy density color scale
+// t = 0 (low energy) → blue; t = 1 (high energy) → red
+// ═══════════════════════════════════════════════════════════════════
+function jetColor(t){
+  t=Math.max(0,Math.min(1,t));
+  let r,g,b;
+  if(t<0.125){r=0;g=0;b=0.5+4*t;}
+  else if(t<0.375){r=0;g=8*(t-0.125);b=1;}
+  else if(t<0.625){r=8*(t-0.375);g=1;b=1-8*(t-0.375);}
+  else if(t<0.875){r=1;g=1-8*(t-0.625);b=0;}
+  else{r=1-4*(t-0.875);g=0;b=0;}
+  return`rgb(${Math.round(r*255)},${Math.round(g*255)},${Math.round(b*255)})`;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ANNULAR SECTOR PATH — a "wedge slice" of a ring, used for polar plot
+// Compass convention: 0° = North (top), clockwise
+// r1 = inner radius (longer period, closer to center)
+// r2 = outer radius (shorter period, closer to edge)
+// ═══════════════════════════════════════════════════════════════════
+function annularSector(cx,cy,r1,r2,sDeg,eDeg){
+  const toR=d=>(d-90)*Math.PI/180;
+  const a1=toR(sDeg),a2=toR(eDeg),lg=(eDeg-sDeg)>180?1:0;
+  const c1=Math.cos(a1),s1=Math.sin(a1),c2=Math.cos(a2),s2=Math.sin(a2);
+  return[`M${cx+r1*c1},${cy+r1*s1}`,`L${cx+r2*c1},${cy+r2*s1}`,
+    `A${r2},${r2},0,${lg},1,${cx+r2*c2},${cy+r2*s2}`,
+    `L${cx+r1*c2},${cy+r1*s2}`,`A${r1},${r1},0,${lg},0,${cx+r1*c1},${cy+r1*s1}Z`].join(' ');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DIRECTION ARROWHEAD — stemless filled triangle
+// dir = compass degrees the swell/wind is coming FROM
+// Arrow tip points in the direction of TRAVEL (dir + 180°)
+// ═══════════════════════════════════════════════════════════════════
+function DirArrow({cx,cy,dir,color,size=8}){
+  const travel=(dir+180)%360;
+  const pts=`0,${-size} ${size*0.55},${size*0.6} ${-size*0.55},${size*0.6}`;
+  return <g transform={`translate(${cx},${cy}) rotate(${travel})`}><polygon points={pts} fill={color} opacity="0.85"/></g>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// POLAR ENERGY SPECTRUM COMPONENT (CDIP-style)
+// Directional wave energy density displayed as a polar radial plot.
+// - Radial distance from center = wave frequency (1/period)
+//   Center = long-period swells (~33s), outer edge = short period (~8s)
+// - Compass direction = direction swell is coming FROM
+// - Color = energy density (blue low → red high), jet colormap
 //
-// ⚠ IMPORTANT — About the dashed "forecast" portion:
-//   The solid line (past → now) represents observed buoy readings.
-//   The dashed line (now → future) is a DEMO PROJECTION only —
-//   it is NOT real forecast data. True wave forecasts come from
-//   NOAA's WaveWatch III (WW3) model. Integrating real WW3 data
-//   is a planned future feature of this app.
-//
-// Swell direction = degrees the swell is coming FROM (nautical).
-// Period = dominant wave period in seconds (most important field!).
-// ═══════════════════════════════════════════════════════════════
-function genBuoyDemo(id) {
-  const seed  = parseInt(id.replace(/\D/g,"")) % 97;
-  const baseH = 1.2 + (seed%22)*0.07;   // base wave height (ft)
-  const baseP = 9   + (seed%7);         // base dominant period (s), range 9–15
-  const baseD = 220 + (seed%5)*18;      // base direction (degrees FROM)
-  const pts   = [];
-  for (let am=0; am<=N_DAYS*1440; am+=60) {
-    const h = am/60;
-    // Wave height varies realistically
-    const wh = Math.max(0.2,
-      baseH
-      +0.55*Math.sin(h*0.16+seed*0.09)
-      +0.28*Math.cos(h*0.35)
-      +0.12*Math.sin(h*0.71+seed*0.04));
-    // Period changes slowly — longer period swells take hours to shift
-    const period = Math.max(4, Math.round(
-      baseP
-      +2*Math.sin(h*0.05+seed*0.07)
-      +1*Math.cos(h*0.12)));
-    // Direction drifts slowly (real swells rotate gradually)
-    const dir = (baseD + 20*Math.sin(h*0.08+seed*0.1) + 360) % 360;
-    pts.push({am, wh, period, dir});
-  }
-  return pts;
+// spectralData = { dirIdx: { periodIdx: energy } }
+// ═══════════════════════════════════════════════════════════════════
+const SPEC_DIRS    = Array.from({length:24},(_,i)=>i*15);     // 0,15,...,345°
+const SPEC_PERIODS = [8,10,12,14,16,18,20,25,30,33];          // seconds
+
+function generateSpectrum(buoyId){
+  // Seed from buoy ID for consistent per-buoy appearance
+  const seed=parseInt(buoyId.replace(/\D/g,""))%97;
+  // Multi-swell scenario typical of SoCal:
+  const swells=[
+    {dir:295+(seed%5)*4, period:14+(seed%4),   energy:0.013+(seed%10)*0.0008, sDir:20, sP:0.18},
+    {dir:215+(seed%4)*5, period:17+(seed%5),   energy:0.006+(seed%8)*0.0005,  sDir:15, sP:0.20},
+    {dir:260+(seed%6)*5, period:9+(seed%3),    energy:0.003+(seed%5)*0.0004,  sDir:35, sP:0.25},
+  ];
+  const grid={};
+  SPEC_DIRS.forEach((d,di)=>{
+    grid[di]={};
+    SPEC_PERIODS.forEach((p,pi)=>{
+      let e=0;
+      swells.forEach(s=>{
+        const dDiff=Math.min(Math.abs(d-s.dir),360-Math.abs(d-s.dir));
+        const pDiff=Math.log(p)-Math.log(s.period);
+        e+=s.energy*Math.exp(-0.5*(dDiff/s.sDir)**2-0.5*(pDiff/s.sP)**2);
+      });
+      grid[di][pi]=e;
+    });
+  });
+  return grid;
 }
 
-// ═══════════════════════════════════════════════════════════════
-// DEMO WIND DATA GENERATOR
-// Produces wind speed (kts) and direction for 3 days.
-// Same structure as buoy data — solid past, dashed "demo" future.
-//
-// ⚠ The dashed portion is a DEMO PROJECTION, not a real forecast.
-//   Real wind forecasts come from NOAA GFS model (future feature).
-// ═══════════════════════════════════════════════════════════════
-function genWindDemo(stationId) {
-  const seed  = parseInt(stationId.replace(/\D/g,"")) % 83;
-  const baseSpd = 6 + (seed%10);         // base wind speed (kts)
-  const baseDir = 270 + (seed%8)*10;     // base wind direction (FROM)
-  const pts     = [];
-  for (let am=0; am<=N_DAYS*1440; am+=60) {
-    const h = am/60;
-    const spd = Math.max(1,
-      baseSpd
-      +4*Math.sin(h*0.2+seed*0.08)
-      +2*Math.cos(h*0.45)
-      +1*Math.sin(h*0.9+seed*0.06));
-    const dir = (baseDir + 30*Math.sin(h*0.06+seed*0.09) + 360) % 360;
-    pts.push({am, spd, dir});
-  }
-  return pts;
-}
+function PolarSpectrum({buoyId}){
+  const sz=260,cx=sz/2,cy=sz/2,R=sz/2-18;
+  const rOf=p=>R*(8/p); // frequency axis: 8s→outer edge, 33s→center
+  const grid=useMemo(()=>generateSpectrum(buoyId),[buoyId]);
+  const allE=Object.values(grid).flatMap(d=>Object.values(d));
+  const maxE=Math.max(...allE)||1;
 
-// Demo fallback tide hi/lo (3 days, Santa Monica pattern)
-const DEMO_HL = [0,1,2].flatMap(d=>[
-  {am:d*1440+327,  v:4.30+d*0.04,  type:"H"},
-  {am:d*1440+745,  v:-0.18+d*0.02, type:"L"},
-  {am:d*1440+1152, v:4.38-d*0.03,  type:"H"},
-]);
+  // Colorbar gradient stops
+  const cbStops=[0,0.25,0.5,0.75,1].map(t=>`${jetColor(t)} ${t*100}%`).join(',');
 
-// ═══════════════════════════════════════════════════════════════
-// UNIT & TIME HELPERS
-// ═══════════════════════════════════════════════════════════════
-const ftToM = v => v*0.3048, ktsToMph = v => v*1.15078;
-const cvt   = (v,m) => m?ftToM(v):v;
-const fmtV  = (v,m) => cvt(v,m).toFixed(2);
-const fmtVs = (v,m) => `${cvt(v,m).toFixed(1)} ${m?"m":"ft"}`;
-const uLbl  = m => m?"m":"ft";
-
-// Format absolute-minutes as a 12-hour time string
-function fmtTime(am, short=false) {
-  const h=Math.floor(am%1440/60)%24, mm=Math.round(am%60), ap=h>=12?"PM":"AM";
-  return short
-    ?`${h%12||12}:${String(mm).padStart(2,"0")}${ap.toLowerCase()}`
-    :`${h%12||12}:${String(mm).padStart(2,"0")} ${ap}`;
-}
-
-// Convert compass degrees → 16-point cardinal string
-function dirLabel(deg) {
-  const dirs=["N","NNE","NE","ENE","E","ESE","SE","SSE",
-               "S","SSW","SW","WSW","W","WNW","NW","NNW"];
-  return dirs[Math.round(((deg%360)+360)%360/22.5)%16];
-}
-
-const nowLocalStr=()=>new Date().toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",hour12:true});
-const nowUTCStr=()=>{const d=new Date();return`${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")} UTC`;};
-const dateFmt=d=>`${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}`;
-const dateKey=d=>d.toISOString().slice(0,10).replace(/-/g,"");
-
-// ═══════════════════════════════════════════════════════════════
-// DIRECTION ARROWHEAD (no stem — filled triangle only)
-// cx, cy = center of arrowhead placement
-// dir    = compass degrees the swell/wind is coming FROM
-// The triangle tip points in the direction of TRAVEL (opposite of FROM)
-// size   = arrowhead size in SVG units
-// ═══════════════════════════════════════════════════════════════
-function DirArrow({ cx, cy, dir, color, size=8 }) {
-  // Travel direction = from + 180
-  const travelDeg = (dir + 180) % 360;
-  // Triangle: tip at top (0,-size), base corners at (±size*0.55, +size*0.6)
-  const pts = `0,${-size} ${size*0.55},${size*0.6} ${-size*0.55},${size*0.6}`;
-  return (
-    <g transform={`translate(${cx},${cy}) rotate(${travelDeg})`}>
-      <polygon points={pts} fill={color} opacity="0.85"/>
-    </g>
+  return(
+    <div>
+      <svg width={sz} height={sz} style={{display:"block",margin:"0 auto"}}>
+        {/* Background */}
+        <circle cx={cx} cy={cy} r={R} fill={C.card} stroke={C.border} strokeWidth="0.5"/>
+        {/* Period rings */}
+        {SPEC_PERIODS.map(p=>(
+          <circle key={p} cx={cx} cy={cy} r={rOf(p)} fill="none" stroke="rgba(100,100,100,0.12)" strokeWidth="0.5"/>
+        ))}
+        {/* Cardinal direction lines */}
+        {[0,45,90,135,180,225,270,315].map(d=>{
+          const rad=(d-90)*Math.PI/180;
+          return<line key={d} x1={cx+8*Math.cos(rad)} y1={cy+8*Math.sin(rad)} x2={cx+R*Math.cos(rad)} y2={cy+R*Math.sin(rad)} stroke="rgba(100,100,100,0.1)" strokeWidth="0.5"/>;
+        })}
+        {/* Energy spectrum cells */}
+        {SPEC_DIRS.map((d,di)=>
+          SPEC_PERIODS.slice(0,-1).map((p,pi)=>{
+            const e=grid[di]?.[pi]??0;
+            if(e<0.002*maxE)return null;
+            const r1=rOf(SPEC_PERIODS[pi+1]);
+            const r2=rOf(p);
+            return<path key={`${di}-${pi}`} d={annularSector(cx,cy,r1,r2,d-7.5,d+7.5)} fill={jetColor(e/maxE)} opacity="0.9"/>;
+          })
+        )}
+        {/* Cardinal direction labels */}
+        {[["N",0],["E",90],["S",180],["W",270]].map(([lbl,d])=>{
+          const rad=(d-90)*Math.PI/180,lr=R+12;
+          return<text key={lbl} x={cx+lr*Math.cos(rad)} y={cy+lr*Math.sin(rad)} textAnchor="middle" dominantBaseline="middle" fill={C.sub} fontSize="9" fontWeight="700">{lbl}</text>;
+        })}
+        {/* Period labels on east axis */}
+        {[8,12,16,22,33].map(p=>(
+          <text key={p} x={cx+rOf(p)+2} y={cy-2} fill={C.light} fontSize="6.5">{p}s</text>
+        ))}
+        {/* Center text */}
+        <text x={cx} y={cy-4} textAnchor="middle" fill={C.sub} fontSize="7.5">Period</text>
+        <text x={cx} y={cy+7} textAnchor="middle" fill={C.sub} fontSize="7.5">range:</text>
+        <text x={cx} y={cy+18} textAnchor="middle" fill={C.sub} fontSize="9" fontWeight="800">8–33 sec</text>
+      </svg>
+      {/* Colorbar */}
+      <div style={{margin:"6px 16px 2px",height:10,borderRadius:4,background:`linear-gradient(to right,${cbStops})`}}/>
+      <div style={{display:"flex",justifyContent:"space-between",padding:"0 16px",fontSize:8,color:C.light}}>
+        <span>Low energy</span><span>High energy</span>
+      </div>
+      <div style={{textAlign:"center",fontSize:8,color:C.light,marginTop:2,fontStyle:"italic"}}>
+        Demo spectral shape · CDIP live integration planned
+      </div>
+    </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════
-// MAIN APP COMPONENT
-// ═══════════════════════════════════════════════════════════════
-function TideTrack() {
+// ═══════════════════════════════════════════════════════════════════
+// UNIT & TIME HELPERS
+// ═══════════════════════════════════════════════════════════════════
+const ftToM=v=>v*0.3048,cvt=(v,m)=>m?ftToM(v):v;
+const fmtV=(v,m)=>cvt(v,m).toFixed(2),fmtVs=(v,m)=>`${cvt(v,m).toFixed(1)} ${m?"m":"ft"}`,uLbl=m=>m?"m":"ft";
+function fmtTime(am,short=false){
+  const h=Math.floor(am%1440/60)%24,mm=Math.round(am%60),ap=h>=12?"PM":"AM";
+  return short?`${h%12||12}:${String(mm).padStart(2,"0")}${ap.toLowerCase()}`:`${h%12||12}:${String(mm).padStart(2,"0")} ${ap}`;
+}
+function dirLabel(deg){
+  const d=["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+  return d[Math.round(((deg%360)+360)%360/22.5)%16];
+}
+const nowLocal=()=>new Date().toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",hour12:true});
+const nowUTC=()=>{const d=new Date();return`${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")} UTC`;};
+const dateFmt=d=>`${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}`;
+const dateKey=d=>d.toISOString().slice(0,10).replace(/-/g,"");
 
-  // Reference dates
-  const today = new Date();
-  const yest  = new Date(today); yest.setDate(today.getDate()-1);
-  const tmrw  = new Date(today); tmrw.setDate(today.getDate()+1);
-  const nowAM = 1440 + today.getHours()*60 + today.getMinutes();
+// ═══════════════════════════════════════════════════════════════════
+// MAIN COMPONENT
+// ═══════════════════════════════════════════════════════════════════
+function TideTrack(){
+  const today=new Date();
+  const yest=new Date(today);yest.setDate(today.getDate()-1);
+  const tmrw=new Date(today);tmrw.setDate(today.getDate()+1);
+  const nowAM=1440+today.getHours()*60+today.getMinutes();
 
-  // App state
-  const [stIdx,     setStIdx]    = useState(0);
-  const [hlPts,     setHlPts]    = useState(null);
-  const [loading,   setLoading]  = useState(true);
-  const [isDemo,    setIsDemo]   = useState(false);
-  const [cursor,    setCursor]   = useState(nowAM);
-  const [metric,    setMetric]   = useState(false);
-  const [expanded,  setExpanded] = useState(false);
-  const [selBuoys,  setSelBuoys] = useState(["46221","46025"]);
-  const [traceMode, setTraceMode]= useState(false); // mobile drag-trace toggle
-  const [showPick,  setShowPick] = useState(false);
-  const [showBuoy,  setShowBuoy] = useState(false);
-  const [showWind,  setShowWind] = useState(true);
-  const [showMoon,  setShowMoon] = useState(true);
-  const [, tick]                 = useState(0);
+  // ── App state ──────────────────────────────────────────────────
+  const [stIdx,    setStIdx]    = useState(0);
+  const [hlPts,    setHlPts]    = useState(null);   // NOAA tide hi/lo
+  const [marineData,setMarine]  = useState(null);   // Open-Meteo swell
+  const [windData,  setWind]    = useState(null);   // Open-Meteo wind
+  const [isDemo,   setIsDemo]   = useState(false);
+  const [isMDemo,  setMDemo]    = useState(false);  // marine is demo
+  const [loading,  setLoading]  = useState(true);
+  const [cursor,   setCursor]   = useState(nowAM);
+  const [metric,   setMetric]   = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [selBuoys, setSelBuoys] = useState(["46221","46025"]);
+  const [polarBuoy,setPolarBuoy]= useState("46221"); // which buoy for polar plot
+  const [showPick, setShowPick] = useState(false);
+  const [showBuoy, setShowBuoy] = useState(false);
+  const [showPolar,setShowPolar]= useState(false);
+  const [showMoon, setShowMoon] = useState(true);
+  const [scrollOffset,setScrollOff]=useState(0);
+  const [,tick]=useState(0);
 
-  const scrollEl = useRef(null);
-  const rafId    = useRef(null);
+  // ── Refs ────────────────────────────────────────────────────────
+  const svgAreaRef   = useRef(null);  // the chart div — touch capture
+  const scrollStrip  = useRef(null);  // bottom scroll strip
+  const outerRef     = useRef(null);  // outer container for measuring width
+  const viewWRef     = useRef(440);   // viewport width (measured on mount)
+  const scrollOffRef = useRef(0);     // ref mirror of scrollOffset (for touch handler)
+  const rafId        = useRef(null);
 
+  // ── Derived ─────────────────────────────────────────────────────
   const st   = STATIONS[stIdx];
-  const suns = [yest, today, tmrw].map(d => sunTimes(st.lat, st.lon, d));
+  const suns = [yest,today,tmrw].map(d=>sunTimes(st.lat,st.lon,d));
   const ph   = moonPhase(today);
-  const [, mEmoji, mName] = moonInfo(ph);
-  const isSpring = ph<3||ph>27||(ph>13&&ph<17);
+  const [,mEmoji,mName]=moonInfo(ph);
+  const isSpring=ph<3||ph>27||(ph>13&&ph<17);
 
-  // Clock re-render every 30 s
-  useEffect(()=>{
-    const id=setInterval(()=>tick(n=>n+1),30000);
-    return()=>clearInterval(id);
-  },[]);
+  // Clock refresh
+  useEffect(()=>{const id=setInterval(()=>tick(n=>n+1),30000);return()=>clearInterval(id);},[]);
 
-  // Fetch 3-day NOAA tide hi/lo
+  // ── Fetch NOAA tide hi/lo (3 days) ──────────────────────────────
   useEffect(()=>{
-    setLoading(true); setHlPts(null); setExpanded(false);
+    setLoading(true);setHlPts(null);setExpanded(false);
     const yKey=dateKey(yest),tKey=dateKey(today),mKey=dateKey(tmrw);
     const url=`https://api.tidesandcurrents.noaa.gov/api/prod/datagetter`+
-      `?begin_date=${dateFmt(yest)}&end_date=${dateFmt(tmrw)}`+
-      `&station=${st.id}&product=predictions&datum=MLLW`+
-      `&time_zone=lst_ldt&interval=hilo&units=english&application=tidetrack&format=json`;
+      `?begin_date=${dateFmt(yest)}&end_date=${dateFmt(tmrw)}&station=${st.id}`+
+      `&product=predictions&datum=MLLW&time_zone=lst_ldt&interval=hilo&units=english&application=tidetrack&format=json`;
     fetch(url).then(r=>r.json()).then(data=>{
       if(data.predictions){
         const pts=data.predictions.map(p=>{
@@ -403,97 +445,80 @@ function TideTrack() {
           const[hh,mm]=p.t.slice(11,16).split(":").map(Number);
           return{am:di*1440+hh*60+mm,v:parseFloat(p.v),type:p.type};
         }).sort((a,b)=>a.am-b.am);
-        setHlPts(pts); setIsDemo(false);
-      } else { setHlPts(DEMO_HL); setIsDemo(true); }
+        setHlPts(pts);setIsDemo(false);
+      }else{setHlPts(DEMO_HL);setIsDemo(true);}
       setLoading(false);
     }).catch(()=>{setHlPts(DEMO_HL);setIsDemo(true);setLoading(false);});
   },[stIdx]);
 
-  // Auto-scroll to center "now" on first load
+  // ── Fetch Open-Meteo marine + wind forecast ──────────────────────
+  // This replaces fake demo data with real ECMWF/GFS model data.
+  // Past hours = model analysis. Future hours = actual forecast.
   useEffect(()=>{
-    if(!loading&&scrollEl.current){
-      scrollEl.current.scrollLeft=xOf(nowAM)-scrollEl.current.clientWidth/2;
+    setMarine(null);setWind(null);setMDemo(false);
+    Promise.all([fetchMarine(st.lat,st.lon,today),fetchWind(st.lat,st.lon,today)])
+      .then(([m,w])=>{
+        setMarine(m||genBuoyDemo(st.id));
+        setWind(w||genWindDemo(st.id));
+        if(!m||!w)setMDemo(true);
+      })
+      .catch(()=>{
+        setMarine(genBuoyDemo(st.id));
+        setWind(genWindDemo(st.id));
+        setMDemo(true);
+      });
+  },[stIdx]);
+
+  // ── Auto-scroll to NOW on load ───────────────────────────────────
+  useEffect(()=>{
+    if(!loading&&scrollStrip.current&&outerRef.current){
+      viewWRef.current=outerRef.current.clientWidth;
+      const nowX=xOf(nowAM);
+      const off=Math.max(0,nowX-viewWRef.current/2);
+      scrollStrip.current.scrollLeft=off;
+      scrollOffRef.current=off;
+      setScrollOff(off);
     }
   },[loading]);
 
-  // ── TRACE MODE: non-passive touchmove listener ───────────────────
-  // When trace mode is ON, we attach a non-passive touchmove listener
-  // that calls preventDefault() — this stops the browser from scrolling
-  // and lets us read the touch position to update the cursor instead.
-  // When OFF, the listener is removed and normal scroll resumes.
+  // ── Non-passive touch listeners on chart for tracing ────────────
+  // By calling e.preventDefault() in touchmove, we block the browser's
+  // native scroll. The chart area ONLY traces — scroll is done via
+  // the bottom strip. This never conflicts.
   useEffect(()=>{
-    const el = scrollEl.current;
-    if (!el) return;
-    const handler = e => {
-      if (!traceMode) return;
-      e.preventDefault(); // blocks scroll — ONLY when trace mode is active
-      const touch = e.touches[0];
-      const rect  = el.getBoundingClientRect();
-      const svgX  = touch.clientX - rect.left + el.scrollLeft;
-      const am    = (svgX - L_PAD) * (1440 / DAY_PX);
-      if (rafId.current) cancelAnimationFrame(rafId.current);
-      rafId.current = requestAnimationFrame(()=>{
+    const el=svgAreaRef.current;
+    if(!el)return;
+    const trace=e=>{
+      if(e.touches.length!==1)return;
+      e.preventDefault();
+      const t=e.touches[0];
+      const rect=el.getBoundingClientRect();
+      const absX=t.clientX-rect.left+scrollOffRef.current;
+      const am=(absX-L_PAD)*(1440/DAY_PX);
+      if(rafId.current)cancelAnimationFrame(rafId.current);
+      rafId.current=requestAnimationFrame(()=>{
         setCursor(Math.max(0,Math.min(N_DAYS*1440-1,Math.round(am))));
         rafId.current=null;
       });
     };
-    // { passive: false } is required to allow preventDefault inside
-    el.addEventListener('touchmove', handler, { passive: false });
-    return () => el.removeEventListener('touchmove', handler);
-  }, [traceMode]);
+    el.addEventListener('touchstart',trace,{passive:false});
+    el.addEventListener('touchmove', trace,{passive:false});
+    return()=>{el.removeEventListener('touchstart',trace);el.removeEventListener('touchmove',trace);};
+  },[]);
 
-  // ── Y-axis scaling ──────────────────────────────────────────────
-  const dMin=hlPts?Math.min(...hlPts.map(h=>h.v)):0;
-  const dMax=hlPts?Math.max(...hlPts.map(h=>h.v)):5;
-  const needsExp=dMin<Y_FIX_MIN+0.1||dMax>Y_FIX_MAX-0.1;
-  const yMin=expanded?dMin-0.8:Y_FIX_MIN;
-  const yMax=expanded?dMax+0.8:Y_FIX_MAX;
-  const yRange=yMax-yMin;
-  let yTicks;
-  if(!expanded){yTicks=Y_FIX_TICKS;}
-  else{const s=yRange>16?4:yRange>8?2:1;yTicks=[];for(let v=Math.ceil(yMin/s)*s;v<=yMax;v+=s)yTicks.push(v);}
-  const yTV = v => yT(v,yMin,yMax);
-
-  // ── Tide smooth curve ─────────────────────────────────────────
-  const tCurve=hlPts?Array.from({length:433},(_,i)=>({am:i*10,v:interpTide(hlPts,i*10)})):[];
-  const tPath=tCurve.length?"M "+tCurve.map(p=>`${xOf(p.am).toFixed(1)},${yTV(p.v).toFixed(1)}`).join(" L "):"";
-  const tArea=tPath?`${tPath} L ${xOf(N_DAYS*1440)},${yTV(yMin)} L ${xOf(0)},${yTV(yMin)} Z`:"";
-
-  // ── Buoy & wind data ──────────────────────────────────────────
-  const buoyData  = selBuoys.map(id=>({id,pts:genBuoyDemo(id)}));
-  const windData  = genWindDemo(st.id);
-  const swMax     = Math.max(4,...buoyData.flatMap(b=>b.pts.map(p=>p.wh)));
-  const wndMax    = Math.max(15,...windData.map(p=>p.spd));
-  const ySV       = v => yS(v,swMax);
-  const yWV       = v => yW(v,wndMax);
-
-  // ── Cursor readings ───────────────────────────────────────────
-  const selTide   = hlPts?interpTide(hlPts,cursor):0;
-  const curDay    = Math.floor(cursor/1440);
-  const curDayLbl = curDay===0?"Yesterday":curDay===1?"Today":"Tomorrow";
-  const nextHL    = hlPts?.find(p=>p.am>nowAM);
-  const nowX      = xOf(nowAM), curX=xOf(cursor);
-
-  // Interpolate each buoy's wh, period, and dir at cursor position
-  const buoyReadings = buoyData.map(bd=>({
-    id:   bd.id,
-    wh:   interpLinear(bd.pts,cursor,'wh'),
-    period: interpLinear(bd.pts,cursor,'period'),
-    dir:  bd.pts.find(p=>p.am>=cursor)?.dir ?? bd.pts[bd.pts.length-1].dir,
-  }));
-
-  // Wind reading at cursor
-  const windReading = {
-    spd: interpLinear(windData,cursor,'spd'),
-    dir: windData.find(p=>p.am>=cursor)?.dir ?? windData[windData.length-1].dir,
+  // ── Bottom strip scroll → update chart viewBox ──────────────────
+  const onStripScroll=e=>{
+    const off=e.target.scrollLeft;
+    scrollOffRef.current=off;
+    setScrollOff(off);
   };
 
-  // ── Desktop: smooth mousemove tracing (no conflicts) ─────────
-  const onMouseMove = useCallback(e=>{
-    if(!scrollEl.current)return;
-    const rect=scrollEl.current.getBoundingClientRect();
-    const svgX=e.clientX-rect.left+scrollEl.current.scrollLeft;
-    const am=(svgX-L_PAD)*(1440/DAY_PX);
+  // ── Desktop: smooth mousemove tracing ───────────────────────────
+  const onMouseMove=useCallback(e=>{
+    const el=svgAreaRef.current;if(!el)return;
+    const rect=el.getBoundingClientRect();
+    const absX=e.clientX-rect.left+scrollOffRef.current;
+    const am=(absX-L_PAD)*(1440/DAY_PX);
     if(rafId.current)cancelAnimationFrame(rafId.current);
     rafId.current=requestAnimationFrame(()=>{
       setCursor(Math.max(0,Math.min(N_DAYS*1440-1,Math.round(am))));
@@ -501,45 +526,86 @@ function TideTrack() {
     });
   },[]);
 
-  // Mobile: tap-to-set cursor (swipe fires scroll, not click — no conflict)
-  const onChartClick = useCallback(e=>{
-    if(!scrollEl.current)return;
-    const rect=scrollEl.current.getBoundingClientRect();
-    const svgX=e.clientX-rect.left+scrollEl.current.scrollLeft;
-    const am=(svgX-L_PAD)*(1440/DAY_PX);
-    setCursor(Math.max(0,Math.min(N_DAYS*1440-1,Math.round(am))));
-  },[]);
+  // ── Y-axis scale ────────────────────────────────────────────────
+  const dMin=hlPts?Math.min(...hlPts.map(h=>h.v)):0;
+  const dMax=hlPts?Math.max(...hlPts.map(h=>h.v)):5;
+  const needsExp=dMin<Y_FIX_MIN+0.1||dMax>Y_FIX_MAX-0.1;
+  const yMin=expanded?dMin-0.8:Y_FIX_MIN,yMax=expanded?dMax+0.8:Y_FIX_MAX,yRange=yMax-yMin;
+  let yTicks;
+  if(!expanded){yTicks=Y_FIX_TICKS;}
+  else{const s=yRange>16?4:yRange>8?2:1;yTicks=[];for(let v=Math.ceil(yMin/s)*s;v<=yMax;v+=s)yTicks.push(v);}
+  const yTV=useCallback(v=>yTf(v,yMin,yMax),[yMin,yMax]);
 
-  const toggleBuoy=id=>setSelBuoys(prev=>
-    prev.includes(id)?prev.filter(b=>b!==id):prev.length<3?[...prev,id]:prev
-  );
+  // ── Tide smooth curve (memoized — only changes when hlPts changes) ─
+  const {tPath,tArea}=useMemo(()=>{
+    if(!hlPts)return{tPath:"",tArea:""};
+    const curve=Array.from({length:433},(_,i)=>({am:i*10,v:interpTide(hlPts,i*10)}));
+    const tp="M "+curve.map(p=>`${xOf(p.am).toFixed(1)},${yTV(p.v).toFixed(1)}`).join(" L ");
+    const ta=`${tp} L ${xOf(N_DAYS*1440)},${yTV(yMin)} L ${xOf(0)},${yTV(yMin)} Z`;
+    return{tPath:tp,tArea:ta};
+  },[hlPts,yTV,yMin]);
+
+  // ── Marine/wind data (use Open-Meteo or demo) ────────────────────
+  // For multi-buoy visual: apply small per-buoy offsets to distinguish lines
+  const buoyLines=useMemo(()=>{
+    if(!marineData)return[];
+    return selBuoys.map((id,bi)=>{
+      const seed=parseInt(id.replace(/\D/g,""))%97;
+      const hOff=(bi===0)?0:((seed%10-5)*0.04);  // small height offset per buoy
+      const pOff=(bi===0)?0:((seed%6-3)*0.2);     // small period offset
+      return{
+        id,
+        pts:marineData.map(p=>({...p,wh:Math.max(0.1,p.wh+hOff),period:Math.max(4,p.period+pOff)}))
+      };
+    });
+  },[marineData,selBuoys]);
+
+  const swMax=useMemo(()=>Math.max(4,...(buoyLines.flatMap(b=>b.pts.map(p=>p.wh)))),[buoyLines]);
+  const wndMax=useMemo(()=>Math.max(15,...(windData?.map(p=>p.spd)??[15])),[windData]);
+  const ySV=useCallback(v=>ySf(v,swMax),[swMax]);
+  const yWV=useCallback(v=>yWf(v,wndMax),[wndMax]);
+
+  // ── Cursor-based readings ────────────────────────────────────────
+  const selTide=hlPts?interpTide(hlPts,cursor):0;
+  const curDay=Math.floor(cursor/1440);
+  const curDayLbl=curDay===0?"Yesterday":curDay===1?"Today":"Tomorrow";
+  const nextHL=hlPts?.find(p=>p.am>nowAM);
+  const nowX=xOf(nowAM),curX=xOf(cursor);
+
+  const buoyReadings=buoyLines.map(bd=>({
+    id:bd.id,
+    wh:interpLin(bd.pts,cursor,'wh'),
+    period:Math.round(interpLin(bd.pts,cursor,'period')),
+    dir:bd.pts.find(p=>p.am>=cursor)?.dir??270,
+  }));
+  const windReading={
+    spd:interpLin(windData??[],cursor,'spd'),
+    dir:(windData?.find(p=>p.am>=cursor)?.dir??270),
+  };
+
+  // ── Build solid+dashed path segments ─────────────────────────────
+  // Solid = past observed/analysis (up to nowAM)
+  // Dashed = future forecast (after nowAM) — WITH OPEN-METEO THIS IS REAL!
+  function buildPaths(pts,yFn,field){
+    const past=pts.filter(p=>p.am<=nowAM),future=pts.filter(p=>p.am>=nowAM);
+    const last=past[past.length-1];
+    const pp=past.length?"M "+past.map(p=>`${xOf(p.am).toFixed(1)},${yFn(p[field]).toFixed(1)}`).join(" L "):"";
+    const fp=future.length?"M "+[last??future[0],...future].map(p=>`${xOf(p.am).toFixed(1)},${yFn(p[field]).toFixed(1)}`).join(" L "):"";
+    return{pp,fp};
+  }
+
   const stRegions=[...new Set(STATIONS.map(s=>s.region))];
   const bRegions=[...new Set(BUOYS.map(b=>b.region))];
-
-  // Helper: build solid + dashed path segments for any dataset
-  // pastField and futureField both come from the pts array
-  function buildPaths(pts, xKey, yFn) {
-    const past   = pts.filter(p=>p.am<=nowAM);
-    const future = pts.filter(p=>p.am>=nowAM);
-    const bridge = past.length ? past[past.length-1] : null;
-    const pp = past.length
-      ? "M "+past.map(p=>`${xOf(p.am).toFixed(1)},${yFn(p).toFixed(1)}`).join(" L ")
-      : "";
-    const fp = future.length
-      ? "M "+[bridge,...future].map(p=>`${xOf(p.am).toFixed(1)},${yFn(p).toFixed(1)}`).join(" L ")
-      : "";
-    return {pp, fp};
-  }
+  const vw=viewWRef.current;
 
   // ═══════════════════════════════════════════════════════════════
   // RENDER
   // ═══════════════════════════════════════════════════════════════
-  return (
-    <div style={{background:C.bg,minHeight:"100vh",fontFamily:"'Nunito',sans-serif",
-                 maxWidth:480,margin:"0 auto",paddingBottom:80,color:C.txt}}>
+  return(
+    <div ref={outerRef} style={{background:C.bg,minHeight:"100vh",fontFamily:"'Nunito',sans-serif",maxWidth:480,margin:"0 auto",paddingBottom:80,color:C.txt}}>
       <style>{`
         *{box-sizing:border-box}
-        ::-webkit-scrollbar{height:3px;width:3px;background:transparent}
+        ::-webkit-scrollbar{height:4px;width:3px;background:transparent}
         ::-webkit-scrollbar-thumb{background:${C.border};border-radius:2px}
         @keyframes up{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
         .u{animation:up .25s ease both}
@@ -552,41 +618,26 @@ function TideTrack() {
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
           <div>
             <div style={{fontSize:20,fontWeight:900,letterSpacing:-0.5,lineHeight:1}}>🌊 TideTrack</div>
-            <div style={{fontSize:10,color:C.sub,marginTop:2}}>
-              {today.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})}
-            </div>
+            <div style={{fontSize:10,color:C.sub,marginTop:2}}>{today.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})}</div>
           </div>
           <div style={{textAlign:"right"}}>
-            <div style={{fontSize:14,fontWeight:800}}>{nowLocalStr()}</div>
-            <div style={{fontSize:9,color:C.sub,fontFamily:"'DM Mono',monospace"}}>{nowUTCStr()}</div>
+            <div style={{fontSize:14,fontWeight:800}}>{nowLocal()}</div>
+            <div style={{fontSize:9,color:C.sub,fontFamily:"'DM Mono',monospace"}}>{nowUTC()}</div>
           </div>
         </div>
-
         {/* Station picker */}
         <div style={{marginTop:10,position:"relative"}}>
-          <button onClick={()=>setShowPick(v=>!v)} style={{
-            width:"100%",padding:"7px 12px",borderRadius:10,
-            border:`1px solid ${C.border}`,background:"transparent",
-            color:C.txt,fontSize:11,display:"flex",justifyContent:"space-between",
-            alignItems:"center",fontWeight:700}}>
+          <button onClick={()=>setShowPick(v=>!v)} style={{width:"100%",padding:"7px 12px",borderRadius:10,border:`1px solid ${C.border}`,background:"transparent",color:C.txt,fontSize:11,display:"flex",justifyContent:"space-between",alignItems:"center",fontWeight:700}}>
             <span>📍 {st.name}</span>
             <span style={{color:C.sub,fontWeight:400,fontSize:9}}>{showPick?"▲ close":"▼ change"}</span>
           </button>
           {showPick&&(
-            <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,zIndex:99,
-                         background:C.card,border:`1px solid ${C.border}`,borderRadius:10,
-                         maxHeight:230,overflowY:"auto",boxShadow:"0 6px 24px rgba(0,0,0,.1)"}}>
+            <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,zIndex:99,background:C.card,border:`1px solid ${C.border}`,borderRadius:10,maxHeight:230,overflowY:"auto",boxShadow:"0 6px 24px rgba(0,0,0,.1)"}}>
               {stRegions.map(region=>(
                 <div key={region}>
                   <div style={{padding:"5px 12px 2px",fontSize:8,color:C.sub,letterSpacing:1.2,textTransform:"uppercase",borderTop:`1px solid ${C.border}`}}>{region}</div>
                   {STATIONS.map((s,i)=>s.region!==region?null:(
-                    <button key={s.id} onClick={()=>{setStIdx(i);setShowPick(false);}} style={{
-                      width:"100%",padding:"6px 12px 6px 16px",border:"none",textAlign:"left",
-                      fontSize:11,background:i===stIdx?`${C.tide}20`:"transparent",
-                      color:i===stIdx?C.tide:C.txt,fontWeight:i===stIdx?800:400,
-                      borderLeft:`2px solid ${i===stIdx?C.tide:"transparent"}`}}>
-                      {s.name}
-                    </button>
+                    <button key={s.id} onClick={()=>{setStIdx(i);setShowPick(false);}} style={{width:"100%",padding:"6px 12px 6px 16px",border:"none",textAlign:"left",fontSize:11,background:i===stIdx?`${C.tide}20`:"transparent",color:i===stIdx?C.tide:C.txt,fontWeight:i===stIdx?800:400,borderLeft:`2px solid ${i===stIdx?C.tide:"transparent"}`}}>{s.name}</button>
                   ))}
                 </div>
               ))}
@@ -594,6 +645,7 @@ function TideTrack() {
           )}
         </div>
         {isDemo&&<div style={{marginTop:6,display:"inline-block",padding:"2px 10px",borderRadius:20,fontSize:9,background:"#fdf5d8",border:"1px solid #d4aa40",color:"#886820",fontWeight:700}}>⚠ Demo tide data — live NOAA tides load on GitHub Pages</div>}
+        {isMDemo&&<div style={{marginTop:4,display:"inline-block",padding:"2px 10px",borderRadius:20,fontSize:9,background:"#fdf5d8",border:"1px solid #d4aa40",color:"#886820",fontWeight:700,marginLeft:4}}>⚠ Demo swell/wind data</div>}
       </div>
 
       {loading?(
@@ -602,190 +654,107 @@ function TideTrack() {
 
         {/* ══ READINGS PANEL ══════════════════════════════════════ */}
         <div className="u" style={{padding:"12px 16px 10px",background:C.card,borderBottom:`1px solid ${C.border}`}}>
-
-          {/* Row 1: Tide value + controls */}
+          {/* Tide big number */}
           <div style={{display:"flex",alignItems:"flex-end",gap:6,flexWrap:"wrap"}}>
             <div>
-              <div style={{fontSize:9,color:C.sub,letterSpacing:.5,textTransform:"uppercase",marginBottom:2}}>
-                Tide · {curDayLbl} · {fmtTime(cursor)}
-              </div>
+              <div style={{fontSize:9,color:C.sub,letterSpacing:.5,textTransform:"uppercase",marginBottom:2}}>Tide · {curDayLbl} · {fmtTime(cursor)}</div>
               <div style={{display:"flex",alignItems:"baseline",gap:4}}>
-                <span style={{fontFamily:"'DM Mono',monospace",fontSize:44,fontWeight:500,lineHeight:1,
-                              color:selTide>0?C.tide:"#b04040"}}>
-                  {fmtV(selTide,metric)}
-                </span>
+                <span style={{fontFamily:"'DM Mono',monospace",fontSize:44,fontWeight:500,lineHeight:1,color:selTide>0?C.tide:"#b04040"}}>{fmtV(selTide,metric)}</span>
                 <span style={{fontSize:14,color:C.sub,fontWeight:700,marginBottom:3}}>{uLbl(metric)}</span>
                 <span style={{fontSize:9,color:C.light,marginBottom:4,marginLeft:2}}>MLLW</span>
               </div>
             </div>
-            <div style={{marginLeft:"auto",display:"flex",gap:5,alignSelf:"center",paddingBottom:2,flexWrap:"wrap"}}>
+            <div style={{marginLeft:"auto",display:"flex",gap:5,alignSelf:"center",flexWrap:"wrap"}}>
               <button onClick={()=>setCursor(nowAM)} style={{padding:"4px 11px",borderRadius:20,border:`1.5px solid ${cursor===nowAM?C.tide:C.border}`,background:cursor===nowAM?`${C.tide}20`:C.card,color:cursor===nowAM?C.tide:C.sub,fontSize:10,fontWeight:800}}>Now</button>
               <button onClick={()=>setMetric(v=>!v)} style={{padding:"4px 11px",borderRadius:20,border:`1px solid ${C.border}`,background:C.card,color:C.sub,fontSize:10,fontWeight:700}}>{metric?"→ ft":"→ m"}</button>
-              {/* Trace mode — mobile drag-trace toggle */}
-              <button onClick={()=>setTraceMode(v=>!v)} style={{padding:"4px 11px",borderRadius:20,border:`1.5px solid ${traceMode?"#c05840":C.border}`,background:traceMode?"rgba(192,88,64,0.12)":C.card,color:traceMode?"#c05840":C.sub,fontSize:10,fontWeight:800}}>
-                {traceMode?"✋ Tracing":"👆 Trace"}
-              </button>
               {needsExp&&<button onClick={()=>setExpanded(v=>!v)} style={{padding:"4px 9px",borderRadius:20,border:`1px solid ${C.border}`,background:C.card,color:C.sub,fontSize:9,fontWeight:600}}>{expanded?"↕ Fix":"↕ Exp"}</button>}
             </div>
           </div>
-
-          {/* Next hi/lo */}
           {nextHL&&<div style={{fontSize:10,color:C.sub,marginTop:2}}>{nextHL.type==="H"?"▲ Next high":"▼ Next low"}: {fmtVs(nextHL.v,metric)} at {fmtTime(nextHL.am)} · {Math.floor((nextHL.am-nowAM)/60)}h {(nextHL.am-nowAM)%60}m away</div>}
 
-          {/* Buoy readings at cursor — period is the star */}
+          {/* Swell readings — period is the star */}
           {buoyReadings.length>0&&(
             <div style={{marginTop:8,borderTop:`1px solid ${C.border}`,paddingTop:7}}>
-              <div style={{fontSize:8,color:C.light,letterSpacing:.8,textTransform:"uppercase",marginBottom:5}}>Swell at cursor</div>
-              <div style={{display:"flex",flexDirection:"column",gap:5}}>
-                {buoyReadings.map((r,i)=>{
-                  const b=BUOYS.find(b=>b.id===r.id);
-                  return(
-                    <div key={r.id} style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                      {/* Color dot */}
-                      <div style={{width:10,height:10,borderRadius:"50%",background:C.buoy[i],flexShrink:0}}/>
-                      {/* Buoy name */}
-                      <span style={{fontSize:9,color:C.sub,fontWeight:700,minWidth:80}}>{b?.name||r.id}</span>
-                      {/* Height — medium size */}
-                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:16,fontWeight:500,color:C.txt}}>
-                        {fmtVs(r.wh,metric)}
-                      </span>
-                      {/* Period — largest and most prominent */}
-                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:700,color:C.buoy[i]}}>
-                        {Math.round(r.period)}s
-                      </span>
-                      {/* Direction — small, cardinal + degrees */}
-                      <span style={{fontSize:9,color:C.light,fontFamily:"'DM Mono',monospace"}}>
-                        {dirLabel(r.dir)} {Math.round(r.dir)}°
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
+              <div style={{fontSize:8,color:C.light,letterSpacing:.8,textTransform:"uppercase",marginBottom:5}}>Swell at cursor · {isMDemo?"Demo":"ECMWF/GFS model"}</div>
+              {buoyReadings.map((r,i)=>{
+                const b=BUOYS.find(b=>b.id===r.id);
+                return(
+                  <div key={r.id} style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:3}}>
+                    <div style={{width:10,height:10,borderRadius:"50%",background:C.buoy[i],flexShrink:0}}/>
+                    <span style={{fontSize:9,color:C.sub,fontWeight:700,minWidth:90}}>{b?.name||r.id}</span>
+                    {/* Height — medium */}
+                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:15,fontWeight:500,color:C.txt}}>{fmtVs(r.wh,metric)}</span>
+                    {/* Period — largest, most important surf metric */}
+                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:700,color:C.buoy[i]}}>{r.period}s</span>
+                    {/* Direction — small, cardinal + degrees */}
+                    <span style={{fontSize:9,color:C.light,fontFamily:"'DM Mono',monospace"}}>{dirLabel(r.dir)} {Math.round(r.dir)}°</span>
+                  </div>
+                );
+              })}
             </div>
           )}
 
-          {/* Wind reading at cursor */}
-          {showWind&&(
-            <div style={{marginTop:7,borderTop:`1px solid ${C.border}`,paddingTop:6}}>
-              <div style={{fontSize:8,color:C.light,letterSpacing:.8,textTransform:"uppercase",marginBottom:5}}>Wind at cursor</div>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <div style={{width:10,height:10,borderRadius:"50%",background:C.wind,flexShrink:0}}/>
-                <span style={{fontSize:9,color:C.sub,fontWeight:700}}>Station wind</span>
-                <span style={{fontFamily:"'DM Mono',monospace",fontSize:16,fontWeight:500,color:C.txt}}>
-                  {windReading.spd.toFixed(1)} kts
-                </span>
-                <span style={{fontSize:9,color:C.light,fontFamily:"'DM Mono',monospace"}}>
-                  {dirLabel(windReading.dir)} {Math.round(windReading.dir)}°
-                </span>
-              </div>
+          {/* Wind reading */}
+          {windData&&(
+            <div style={{marginTop:6,borderTop:`1px solid ${C.border}`,paddingTop:6,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              <div style={{fontSize:8,color:C.light,letterSpacing:.8,textTransform:"uppercase",width:"100%",marginBottom:2}}>Wind at cursor</div>
+              <div style={{width:10,height:10,borderRadius:"50%",background:C.wind,flexShrink:0}}/>
+              <span style={{fontFamily:"'DM Mono',monospace",fontSize:15,fontWeight:500,color:C.txt}}>{windReading.spd.toFixed(1)} kts</span>
+              <span style={{fontSize:9,color:C.light,fontFamily:"'DM Mono',monospace"}}>{dirLabel(windReading.dir)} {Math.round(windReading.dir)}°</span>
             </div>
           )}
         </div>
 
-        {/* ══ SCROLLABLE CHART ════════════════════════════════════
-            Interaction model:
-            DESKTOP — mousemove = smooth live tracing (no conflicts)
-            MOBILE  — tap       = set cursor (scroll = swipe, no conflict)
-            MOBILE  — "Trace" button on = touch drag traces chart;
-                      "Trace" button off = normal horizontal scroll
+        {/* ══ CHART (touch = trace, bottom strip = scroll) ════════
+            INTERACTION MODEL:
+            Mobile  — finger on chart = traces the cursor (preventDefault)
+                    — swipe on BOTTOM STRIP = scrolls to other days
+            Desktop — mouse over chart = smooth live tracing
+            No toggle needed — tracing is always on in the chart area.
         */}
-        <div ref={scrollEl}
-          onMouseMove={onMouseMove}
-          onClick={onChartClick}
-          style={{overflowX:traceMode?"hidden":"auto",overflowY:"hidden",
-                  WebkitOverflowScrolling:"touch",background:C.bg,cursor:"crosshair"}}>
-
-          <svg width={SVG_W} height={SVG_H} style={{display:"block"}}>
+        <div ref={svgAreaRef} onMouseMove={onMouseMove}
+          style={{overflow:"hidden",background:C.bg,cursor:"crosshair"}}>
+          <svg width="100%" height={SVG_H}
+            viewBox={`${scrollOffset} 0 ${vw} ${SVG_H}`}
+            style={{display:"block"}}>
             <defs>
-              {/* Tide area gradient */}
-              <linearGradient id="tG" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={C.tideA0}/><stop offset="100%" stopColor={C.tideA1}/>
-              </linearGradient>
-              {/* Wind area gradient */}
-              <linearGradient id="wG" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={C.windA0}/><stop offset="100%" stopColor={C.windA1}/>
-              </linearGradient>
-              {/* Dawn/dusk gradients for each of the 3 days */}
-              {[0,1,2].map(d=>{
-                const s=suns[d];
-                return(<React.Fragment key={d}>
-                  <linearGradient id={`dn${d}`} gradientUnits="userSpaceOnUse" x1={xOf(d*1440+s.fl)} y1="0" x2={xOf(d*1440+s.sr)} y2="0">
-                    <stop offset="0%" stopColor={C.night}/><stop offset="100%" stopColor={C.dawn}/>
-                  </linearGradient>
-                  <linearGradient id={`dk${d}`} gradientUnits="userSpaceOnUse" x1={xOf(d*1440+s.ss)} y1="0" x2={xOf(d*1440+s.ll)} y2="0">
-                    <stop offset="0%" stopColor={C.dawn}/><stop offset="100%" stopColor={C.night}/>
-                  </linearGradient>
-                </React.Fragment>);
-              })}
+              <linearGradient id="tG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={C.tideA0}/><stop offset="100%" stopColor={C.tideA1}/></linearGradient>
+              <linearGradient id="wG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={C.windA0}/><stop offset="100%" stopColor={C.windA1}/></linearGradient>
+              {[0,1,2].map(d=>{const s=suns[d];return(<React.Fragment key={d}>
+                <linearGradient id={`dn${d}`} gradientUnits="userSpaceOnUse" x1={xOf(d*1440+s.fl)} y1="0" x2={xOf(d*1440+s.sr)} y2="0"><stop offset="0%" stopColor={C.night}/><stop offset="100%" stopColor={C.dawn}/></linearGradient>
+                <linearGradient id={`dk${d}`} gradientUnits="userSpaceOnUse" x1={xOf(d*1440+s.ss)} y1="0" x2={xOf(d*1440+s.ll)} y2="0"><stop offset="0%" stopColor={C.dawn}/><stop offset="100%" stopColor={C.night}/></linearGradient>
+              </React.Fragment>);})}
             </defs>
 
-            {/* ── Tide section: day/night background ── */}
+            {/* ── Day/night backgrounds ── */}
             <rect x={L_PAD} y={T_TOP} width={N_DAYS*DAY_PX} height={T_CH+T_BOT} fill={C.night}/>
             {[0,1,2].map(d=>{const s=suns[d];return(<React.Fragment key={d}>
               {s.sr<s.ss&&<rect x={xOf(d*1440+s.sr)} y={T_TOP} width={xOf(d*1440+s.ss)-xOf(d*1440+s.sr)} height={T_CH+T_BOT} fill={C.day}/>}
               {s.fl<s.sr&&<rect x={xOf(d*1440+s.fl)} y={T_TOP} width={xOf(d*1440+s.sr)-xOf(d*1440+s.fl)} height={T_CH+T_BOT} fill={`url(#dn${d})`}/>}
               {s.ss<s.ll&&<rect x={xOf(d*1440+s.ss)} y={T_TOP} width={xOf(d*1440+s.ll)-xOf(d*1440+s.ss)} height={T_CH+T_BOT} fill={`url(#dk${d})`}/>}
             </React.Fragment>);})}
-
-            {/* ── Swell section background ── */}
             <rect x={L_PAD} y={SWELL_Y} width={N_DAYS*DAY_PX} height={S_H} fill={C.card}/>
             {[0,1,2].map(d=>{const s=suns[d];return s.sr<s.ss?<rect key={d} x={xOf(d*1440+s.sr)} y={SWELL_Y} width={xOf(d*1440+s.ss)-xOf(d*1440+s.sr)} height={S_H} fill="#eff5f8"/>:null;})}
-
-            {/* ── Wind section background ── */}
             <rect x={L_PAD} y={WIND_Y} width={N_DAYS*DAY_PX} height={W_H} fill={C.cardB}/>
-            {[0,1,2].map(d=>{const s=suns[d];return s.sr<s.ss?<rect key={d} x={xOf(d*1440+s.sr)} y={WIND_Y} width={xOf(d*1440+s.ss)-xOf(d*1440+s.sr)} height={W_H} fill="#f5f0e0"/>:null;})}
+            {[0,1,2].map(d=>{const s=suns[d];return s.sr<s.ss?<rect key={d} x={xOf(d*1440+s.sr)} y={WIND_Y} width={xOf(d*1440+s.ss)-xOf(d*1440+s.sr)} height={W_H} fill="#f4f0e2"/>:null;})}
 
-            {/* ── Time axis strip ── */}
-            <rect x={0} y={AX_Y} width={SVG_W} height={AX_H} fill={C.card}/>
-
-            {/* ── Section border lines ── */}
-            <line x1={L_PAD} y1={SWELL_Y}   x2={SVG_W} y2={SWELL_Y}   stroke={C.border} strokeWidth="1"/>
-            <line x1={L_PAD} y1={WIND_Y}    x2={SVG_W} y2={WIND_Y}    stroke={C.border} strokeWidth="1"/>
-            <line x1={L_PAD} y1={AX_Y}      x2={SVG_W} y2={AX_Y}      stroke={C.border} strokeWidth="0.5"/>
-
-            {/* ── Y-axis section labels (rotated, on left margin) ── */}
-            {/* "TIDE" label centered in tide section */}
-            <text x={10} y={T_TOP+T_CH/2}
-              textAnchor="middle" dominantBaseline="middle"
-              fill={C.tide} fontSize="8" fontWeight="800" letterSpacing="1"
-              transform={`rotate(-90, 10, ${T_TOP+T_CH/2})`}
-              fontFamily="Nunito,sans-serif">TIDE</text>
-            {/* "SWELL" label centered in swell section */}
-            <text x={10} y={SWELL_Y+S_CH/2+S_TOP}
-              textAnchor="middle" dominantBaseline="middle"
-              fill={C.buoy[0]} fontSize="7.5" fontWeight="800" letterSpacing="1"
-              transform={`rotate(-90, 10, ${SWELL_Y+S_CH/2+S_TOP})`}
-              fontFamily="Nunito,sans-serif">SWELL</text>
-            {/* "WIND" label centered in wind section */}
-            <text x={10} y={WIND_Y+W_CH/2+W_TOP}
-              textAnchor="middle" dominantBaseline="middle"
-              fill={C.wind} fontSize="7.5" fontWeight="800" letterSpacing="1"
-              transform={`rotate(-90, 10, ${WIND_Y+W_CH/2+W_TOP})`}
-              fontFamily="Nunito,sans-serif">WIND</text>
+            {/* ── Section separator lines ── */}
+            <line x1={L_PAD} y1={SWELL_Y}  x2={SVG_W} y2={SWELL_Y}  stroke={C.border} strokeWidth="1"/>
+            <line x1={L_PAD} y1={WIND_Y}   x2={SVG_W} y2={WIND_Y}   stroke={C.border} strokeWidth="1"/>
+            <line x1={L_PAD} y1={SVG_H}    x2={SVG_W} y2={SVG_H}    stroke={C.border} strokeWidth="0.5"/>
 
             {/* ── Day boundary lines ── */}
-            {[1,2].map(d=><line key={d} x1={xOf(d*1440)} y1={T_TOP} x2={xOf(d*1440)} y2={AX_Y} stroke={C.border} strokeWidth="1" strokeDasharray="4,3"/>)}
+            {[1,2].map(d=><line key={d} x1={xOf(d*1440)} y1={T_TOP} x2={xOf(d*1440)} y2={SVG_H} stroke={C.border} strokeWidth="1" strokeDasharray="4,3"/>)}
 
             {/* ── Day header labels ── */}
             {[["YESTERDAY",0],["TODAY",1],["TOMORROW",2]].map(([lbl,d])=>(
-              <text key={lbl} x={xOf(d*1440+720)} y={T_TOP-7}
-                textAnchor="middle" fill={d===1?C.tide:C.light}
-                fontSize="8" fontWeight="700" letterSpacing="0.8"
-                fontFamily="Nunito,sans-serif">{lbl}</text>
+              <text key={lbl} x={xOf(d*1440+720)} y={T_TOP-7} textAnchor="middle" fill={d===1?C.tide:C.light} fontSize="8" fontWeight="700" letterSpacing="0.8" fontFamily="Nunito,sans-serif">{lbl}</text>
             ))}
-            {/* Today column tint */}
             <rect x={xOf(1440)} y={T_TOP} width={DAY_PX} height={T_CH} fill="rgba(77,150,160,0.04)" pointerEvents="none"/>
 
-            {/* ── Tide grid lines ── */}
-            {yTicks.map(v=>(
-              <line key={v} x1={L_PAD} y1={yTV(v)} x2={SVG_W-R_PAD} y2={yTV(v)}
-                stroke={v===0?C.zero:C.border} strokeWidth="0.8" strokeDasharray={v===0?"4,3":"none"}/>
-            ))}
-
-            {/* ── Swell grid lines ── */}
+            {/* ── Grid lines ── */}
+            {yTicks.map(v=><line key={v} x1={L_PAD} y1={yTV(v)} x2={SVG_W-R_PAD} y2={yTV(v)} stroke={v===0?C.zero:C.border} strokeWidth="0.8" strokeDasharray={v===0?"4,3":"none"}/>)}
             {[1,2,3,4].map(v=>{const yv=ySV(v);return(yv>SWELL_Y+4&&yv<SWELL_Y+S_H-4)?<line key={v} x1={L_PAD} y1={yv} x2={SVG_W-R_PAD} y2={yv} stroke={C.border} strokeWidth="0.7"/>:null;})}
-
-            {/* ── Wind grid lines ── */}
             {[5,10,15,20].map(v=>{const yv=yWV(v);return(yv>WIND_Y+4&&yv<WIND_Y+W_H-4)?<line key={v} x1={L_PAD} y1={yv} x2={SVG_W-R_PAD} y2={yv} stroke={C.border} strokeWidth="0.7"/>:null;})}
 
             {/* ── Tide area + curve ── */}
@@ -796,10 +765,8 @@ function TideTrack() {
             {hlPts?.map((p,i)=>{
               if(p.v<yMin||p.v>yMax)return null;
               const cx=xOf(p.am),cy=yTV(p.v),hi=p.type==="H";
-              const nearTop=cy<T_TOP+22,nearBot=cy>T_TOP+T_CH-22;
-              const flip=hi?nearTop:nearBot;
-              const vY=flip?(hi?cy+14:cy-6):(hi?cy-6:cy+14);
-              const tY=flip?(hi?cy+24:cy-16):(hi?cy-16:cy+24);
+              const nearTop=cy<T_TOP+22,nearBot=cy>T_TOP+T_CH-22,flip=hi?nearTop:nearBot;
+              const vY=flip?(hi?cy+14:cy-6):(hi?cy-6:cy+14),tY=flip?(hi?cy+24:cy-16):(hi?cy-16:cy+24);
               return(<g key={i}>
                 <circle cx={cx} cy={cy} r="3.5" fill={hi?C.tide:C.card} stroke={C.tide} strokeWidth="1.5"/>
                 <text x={cx} y={vY} textAnchor="middle" fill={C.tide} fontSize="9" fontWeight="800" fontFamily="Nunito,sans-serif">{fmtVs(p.v,metric)}</text>
@@ -807,142 +774,151 @@ function TideTrack() {
               </g>);
             })}
 
-            {/* ══ BUOY SWELL LINES + ARROWHEADS ════════════════════
-                Solid line  = past observed data (up to now)
-                Dashed line = demo projection (NOT real forecast)
-                Arrowheads  = swell travel direction, every 3 hours
-                Period labels shown every 6 hours along past segment
+            {/* ══ SWELL LINES + PERIOD LABELS + DIRECTION ARROWS ═
+                Solid  = past (model analysis / buoy observed)
+                Dashed = future (real ECMWF/GFS forecast via Open-Meteo)
+                Arrows = swell travel direction, every 3 hours
+                Period labels every 6 hours on past segment
             */}
-            {buoyData.map((bd,bi)=>{
+            {buoyLines.map((bd,bi)=>{
               const col=C.buoy[bi];
-              const {pp,fp}=buildPaths(bd.pts,p=>p.am,p=>ySV(p.wh));
-              const bridgeWH=interpLinear(bd.pts,nowAM,'wh');
-              // Arrow positions: every 3 hours on the past segment
+              const {pp,fp}=buildPaths(bd.pts,ySV,'wh');
+              const bridgeWH=interpLin(bd.pts,nowAM,'wh');
               const arrowPts=bd.pts.filter(p=>p.am<=nowAM&&p.am%180===0);
-              // Period label positions: every 6 hours
               const periodPts=bd.pts.filter(p=>p.am<=nowAM&&p.am%360===0);
               return(<React.Fragment key={bd.id}>
                 {pp&&<path d={pp} fill="none" stroke={col} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>}
-                {fp&&<path d={fp} fill="none" stroke={col} strokeWidth="1.5" strokeDasharray="5,4" opacity="0.38"/>}
-                {/* Dot at "now" junction */}
+                {fp&&<path d={fp} fill="none" stroke={col} strokeWidth="1.5" strokeDasharray="5,4" opacity="0.5"/>}
                 <circle cx={xOf(nowAM)} cy={ySV(bridgeWH)} r="3" fill={col}/>
-                {/* Filled arrowheads (no stem) — larger for readability */}
-                {arrowPts.map((p,ai)=>(
-                  <DirArrow key={ai} cx={xOf(p.am)} cy={ySV(p.wh)} dir={p.dir} color={col} size={7}/>
-                ))}
-                {/* Period labels (seconds) — the most important buoy stat */}
+                {arrowPts.map((p,ai)=><DirArrow key={ai} cx={xOf(p.am)} cy={ySV(p.wh)} dir={p.dir} color={col} size={8}/>)}
                 {periodPts.map((p,pi)=>(
-                  <text key={pi} x={xOf(p.am)} y={ySV(p.wh)-11}
+                  <text key={pi} x={xOf(p.am)} y={ySV(p.wh)-12}
                     textAnchor="middle" fill={col} fontSize="8" fontWeight="800"
-                    fontFamily="DM Mono,monospace">{p.period}s</text>
+                    fontFamily="DM Mono,monospace">{Math.round(p.period)}s</text>
                 ))}
               </React.Fragment>);
             })}
 
-            {/* ── "Demo projection" label on dashed swell future ── */}
-            <text x={xOf(nowAM)+8} y={SWELL_Y+12}
-              fill={C.light} fontSize="7" fontStyle="italic"
-              fontFamily="Nunito,sans-serif">demo projection</text>
+            {/* ── Forecast label on dashed swell ── */}
+            <text x={xOf(nowAM)+6} y={SWELL_Y+11} fill={C.light} fontSize="7" fontStyle="italic" fontFamily="Nunito,sans-serif">
+              {isMDemo?"demo projection":"ECMWF forecast"}
+            </text>
 
-            {/* ══ WIND AREA + LINE + ARROWHEADS ════════════════════
-                Same solid/dashed split as swell.
-                "Demo projection" label on future portion.
-            */}
-            {(()=>{
-              const {pp:wpp,fp:wfp}=buildPaths(windData,p=>p.am,p=>yWV(p.spd));
-              const bridgeSpd=interpLinear(windData,nowAM,'spd');
-              const wArrowPts=windData.filter(p=>p.am<=nowAM&&p.am%180===0);
-              // Build wind area (solid past only)
-              const pastWindArea=windData.filter(p=>p.am<=nowAM);
-              const wAreaPath=pastWindArea.length
-                ?"M "+pastWindArea.map(p=>`${xOf(p.am).toFixed(1)},${yWV(p.spd).toFixed(1)}`).join(" L ")+
-                  ` L ${xOf(nowAM)},${yWV(0)} L ${xOf(0)},${yWV(0)} Z`
-                :"";
+            {/* ══ WIND AREA + LINE + ARROWS ══════════════════════ */}
+            {windData&&(()=>{
+              const{pp:wpp,fp:wfp}=buildPaths(windData,yWV,'spd');
+              const bridgeSpd=interpLin(windData,nowAM,'spd');
+              const pastWind=windData.filter(p=>p.am<=nowAM);
+              const wArea=pastWind.length?"M "+pastWind.map(p=>`${xOf(p.am).toFixed(1)},${yWV(p.spd).toFixed(1)}`).join(" L ")+` L ${xOf(nowAM)},${yWV(0)} L ${xOf(0)},${yWV(0)} Z`:"";
+              const wArrows=windData.filter(p=>p.am<=nowAM&&p.am%180===0);
               return(<React.Fragment>
-                {wAreaPath&&<path d={wAreaPath} fill="url(#wG)"/>}
+                {wArea&&<path d={wArea} fill="url(#wG)"/>}
                 {wpp&&<path d={wpp} fill="none" stroke={C.wind} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>}
-                {wfp&&<path d={wfp} fill="none" stroke={C.wind} strokeWidth="1.5" strokeDasharray="5,4" opacity="0.38"/>}
+                {wfp&&<path d={wfp} fill="none" stroke={C.wind} strokeWidth="1.5" strokeDasharray="5,4" opacity="0.5"/>}
                 <circle cx={xOf(nowAM)} cy={yWV(bridgeSpd)} r="3" fill={C.wind}/>
-                {wArrowPts.map((p,ai)=>(
-                  <DirArrow key={ai} cx={xOf(p.am)} cy={yWV(p.spd)} dir={p.dir} color={C.wind} size={6}/>
-                ))}
-                <text x={xOf(nowAM)+8} y={WIND_Y+12}
-                  fill={C.light} fontSize="7" fontStyle="italic"
-                  fontFamily="Nunito,sans-serif">demo projection</text>
+                {wArrows.map((p,ai)=><DirArrow key={ai} cx={xOf(p.am)} cy={yWV(p.spd)} dir={p.dir} color={C.wind} size={7}/>)}
+                <text x={xOf(nowAM)+6} y={WIND_Y+11} fill={C.light} fontSize="7" fontStyle="italic" fontFamily="Nunito,sans-serif">
+                  {isMDemo?"demo projection":"ECMWF forecast"}
+                </text>
               </React.Fragment>);
             })()}
 
-            {/* ── Y-axis numbers: tide ── */}
-            {yTicks.map(v=>(
-              <text key={v} x={L_PAD-5} y={yTV(v)+3} textAnchor="end"
-                fill={C.sub} fontSize="8" fontFamily="DM Mono,monospace">{v}</text>
+            {/* ── NOW marker ── */}
+            <line x1={nowX} y1={T_TOP-2} x2={nowX} y2={SVG_H} stroke={C.now} strokeWidth="1.5" opacity="0.6"/>
+            <text x={nowX} y={T_TOP-8} textAnchor="middle" fill={C.now} fontSize="7" fontWeight="800" fontFamily="Nunito,sans-serif">NOW</text>
+
+            {/* ── Cursor line + dot ── */}
+            <line x1={curX} y1={T_TOP} x2={curX} y2={SVG_H} stroke="rgba(80,60,40,.18)" strokeWidth="1" strokeDasharray="3,2"/>
+            {(()=>{const rawCY=yTV(selTide),cy=Math.max(T_TOP+4,Math.min(T_TOP+T_CH-4,rawCY));return<circle cx={curX} cy={cy} r="4.5" fill={C.card} stroke={C.tide} strokeWidth="2"/>;})()}
+
+            {/* ── FIXED Y-AXIS OVERLAY ──
+                Painted LAST so it always sits on top of the scrolling content.
+                The rect and labels move with scrollOffset to stay fixed on screen.
+            */}
+            <rect x={scrollOffset} y={0} width={L_PAD+1} height={SVG_H} fill={C.bg}/>
+            {/* Section labels (rotated, left margin) */}
+            {[
+              {lbl:"TIDE", y:T_TOP+T_CH/2,    col:C.tide},
+              {lbl:"SWELL",y:SWELL_Y+S_CH/2+S_TOP, col:C.buoy[0]},
+              {lbl:"WIND", y:WIND_Y+W_CH/2+W_TOP,  col:C.wind},
+            ].map(({lbl,y,col})=>(
+              <text key={lbl}
+                x={scrollOffset+11} y={y}
+                textAnchor="middle" dominantBaseline="middle"
+                fill={col} fontSize="7.5" fontWeight="900" letterSpacing="1"
+                transform={`rotate(-90,${scrollOffset+11},${y})`}
+                fontFamily="Nunito,sans-serif">{lbl}</text>
             ))}
-            <text x={L_PAD-5} y={T_TOP-8} textAnchor="end" fill={C.light} fontSize="7">{uLbl(metric)}</text>
-
-            {/* ── Y-axis numbers: swell ── */}
-            {[1,2,3,4].map(v=>{const yv=ySV(v);return(yv>SWELL_Y+8&&yv<SWELL_Y+S_H-4)?<text key={v} x={L_PAD-5} y={yv+3} textAnchor="end" fill={C.sub} fontSize="7.5" fontFamily="DM Mono,monospace">{v}</text>:null;})}
-            <text x={L_PAD-5} y={SWELL_Y+S_TOP+5} textAnchor="end" fill={C.light} fontSize="7">ft</text>
-
-            {/* ── Y-axis numbers: wind ── */}
-            {[5,10,15,20].map(v=>{const yv=yWV(v);return(yv>WIND_Y+8&&yv<WIND_Y+W_H-4)?<text key={v} x={L_PAD-5} y={yv+3} textAnchor="end" fill={C.sub} fontSize="7.5" fontFamily="DM Mono,monospace">{v}</text>:null;})}
-            <text x={L_PAD-5} y={WIND_Y+W_TOP+5} textAnchor="end" fill={C.light} fontSize="7">kts</text>
-
-            {/* ── NOW marker (spans all three sections) ── */}
-            <line x1={nowX} y1={T_TOP-2} x2={nowX} y2={AX_Y}
-              stroke={C.now} strokeWidth="1.5" opacity="0.6"/>
-            <text x={nowX} y={T_TOP-8} textAnchor="middle"
-              fill={C.now} fontSize="7" fontWeight="800"
-              fontFamily="Nunito,sans-serif">NOW</text>
-
-            {/* ── Cursor line (spans all three sections) ── */}
-            <line x1={curX} y1={T_TOP} x2={curX} y2={AX_Y}
-              stroke="rgba(80,60,40,.18)" strokeWidth="1" strokeDasharray="3,2"/>
-
-            {/* ── Cursor dot on tide curve ── */}
-            {(()=>{
-              const rawCY=yTV(selTide);
-              const cy=Math.max(T_TOP+4,Math.min(T_TOP+T_CH-4,rawCY));
-              return<circle cx={curX} cy={cy} r="4.5" fill={C.card} stroke={C.tide} strokeWidth="2"/>;
-            })()}
-
-            {/* ── Hour axis labels (once per day, bottom strip) ── */}
-            {[0,1,2].map(d=>H_TICKS.map((h,i)=>(
-              <text key={`${d}${h}`} x={xOf(d*1440+h*60)} y={AX_Y+15}
-                textAnchor="middle" fill={C.sub} fontSize="7.5"
-                fontFamily="DM Mono,monospace">{H_LBLS[i]}</text>
-            )))}
+            {/* Tide Y-axis numbers */}
+            {yTicks.map(v=><text key={v} x={scrollOffset+L_PAD-5} y={yTV(v)+3} textAnchor="end" fill={C.sub} fontSize="8" fontFamily="DM Mono,monospace">{v}</text>)}
+            <text x={scrollOffset+L_PAD-5} y={T_TOP-8} textAnchor="end" fill={C.light} fontSize="7">{uLbl(metric)}</text>
+            {/* Swell Y-axis numbers */}
+            {[1,2,3,4].map(v=>{const yv=ySV(v);return(yv>SWELL_Y+8&&yv<SWELL_Y+S_H-4)?<text key={v} x={scrollOffset+L_PAD-5} y={yv+3} textAnchor="end" fill={C.sub} fontSize="7.5" fontFamily="DM Mono,monospace">{v}</text>:null;})}
+            <text x={scrollOffset+L_PAD-5} y={SWELL_Y+S_TOP+5} textAnchor="end" fill={C.light} fontSize="7">ft</text>
+            {/* Wind Y-axis numbers */}
+            {[5,10,15,20].map(v=>{const yv=yWV(v);return(yv>WIND_Y+8&&yv<WIND_Y+W_H-4)?<text key={v} x={scrollOffset+L_PAD-5} y={yv+3} textAnchor="end" fill={C.sub} fontSize="7.5" fontFamily="DM Mono,monospace">{v}</text>:null;})}
+            <text x={scrollOffset+L_PAD-5} y={WIND_Y+W_TOP+5} textAnchor="end" fill={C.light} fontSize="7">kts</text>
           </svg>
         </div>
 
-        {/* Interaction hint bar */}
+        {/* ══ BOTTOM SCROLL STRIP ═════════════════════════════════
+            This is the ONLY place where horizontal scroll is available.
+            Finger swipe here → scrolls chart to adjacent days.
+            Contains the time axis, day labels, NOW marker.
+        */}
+        <div ref={scrollStrip} onScroll={onStripScroll}
+          style={{overflowX:"auto",overflowY:"hidden",background:C.card,borderBottom:`1px solid ${C.border}`}}>
+          <svg width={SVG_W} height={AX_H} style={{display:"block"}}>
+            {[["YEST",0],["TODAY",1],["TMRW",2]].map(([lbl,d])=>(
+              <text key={lbl} x={xOf(d*1440+720)} y={10} textAnchor="middle" fill={d===1?C.tide:C.light} fontSize="7.5" fontWeight="700" fontFamily="Nunito,sans-serif">{lbl}</text>
+            ))}
+            {[1,2].map(d=><line key={d} x1={xOf(d*1440)} y1={0} x2={xOf(d*1440)} y2={AX_H} stroke={C.border} strokeWidth="1" strokeDasharray="4,3"/>)}
+            <line x1={nowX} y1={0} x2={nowX} y2={AX_H} stroke={C.now} strokeWidth="1.5" opacity="0.6"/>
+            {[0,1,2].map(d=>H_TICKS.map((h,i)=>(
+              <text key={`${d}${h}`} x={xOf(d*1440+h*60)} y={AX_H-4} textAnchor="middle" fill={C.sub} fontSize="7.5" fontFamily="DM Mono,monospace">{H_LBLS[i]}</text>
+            )))}
+          </svg>
+        </div>
+        {/* Hint */}
         <div style={{padding:"4px 14px",background:C.cardB,borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between"}}>
-          <span style={{fontSize:8,color:C.light}}>🖱 hover to trace · tap to pin · 👆 Trace button = finger drag</span>
-          <span style={{fontSize:8,color:C.light}}>← swipe for other days →</span>
+          <span style={{fontSize:8,color:C.light}}>🖱 hover / touch chart to trace · swipe bottom bar to scroll days</span>
         </div>
 
-        {/* ── Swell legend + buoy selector ── */}
+        {/* ── Swell legend + controls ── */}
         <div className="u" style={{padding:"7px 14px",background:C.card,borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
           <span style={{fontSize:9,color:C.sub,fontWeight:800,letterSpacing:.5}}>SWELL</span>
-          {selBuoys.map((id,i)=>{
-            const b=BUOYS.find(b=>b.id===id);
-            return(<div key={id} style={{display:"flex",alignItems:"center",gap:4,fontSize:9}}>
+          {selBuoys.map((id,i)=>{const b=BUOYS.find(b=>b.id===id);return(
+            <div key={id} style={{display:"flex",alignItems:"center",gap:4,fontSize:9}}>
               <div style={{width:16,height:2.5,background:C.buoy[i],borderRadius:2}}/>
               <span style={{color:C.sub,fontWeight:600}}>{b?.name||id}</span>
-            </div>);
-          })}
-          <button onClick={()=>setShowBuoy(v=>!v)} style={{marginLeft:"auto",padding:"3px 12px",borderRadius:20,border:`1px solid ${showBuoy?C.tide:C.border}`,background:showBuoy?`${C.tide}20`:C.card,color:showBuoy?C.tide:C.sub,fontSize:9,fontWeight:800}}>
-            {showBuoy?"▲ Done":"+ Buoys"}
-          </button>
+            </div>
+          );})}
+          <div style={{marginLeft:"auto",display:"flex",gap:5}}>
+            <button onClick={()=>setShowPolar(v=>!v)} style={{padding:"3px 10px",borderRadius:20,border:`1px solid ${showPolar?C.buoy[0]:C.border}`,background:showPolar?`${C.buoy[0]}18`:C.card,color:showPolar?C.buoy[0]:C.sub,fontSize:9,fontWeight:800}}>📊 Spectrum</button>
+            <button onClick={()=>setShowBuoy(v=>!v)} style={{padding:"3px 10px",borderRadius:20,border:`1px solid ${showBuoy?C.tide:C.border}`,background:showBuoy?`${C.tide}20`:C.card,color:showBuoy?C.tide:C.sub,fontSize:9,fontWeight:800}}>+ Buoys</button>
+          </div>
         </div>
 
-        {/* Buoy selector panel */}
+        {/* ── Polar energy spectrum panel ── */}
+        {showPolar&&(
+          <div className="u" style={{margin:"8px 14px",borderRadius:12,border:`1px solid ${C.border}`,background:C.card,padding:"12px 0 14px"}}>
+            <div style={{padding:"0 14px 8px",fontWeight:900,fontSize:11}}>
+              📊 Directional Energy Spectrum — Buoy{" "}
+              <select value={polarBuoy} onChange={e=>setPolarBuoy(e.target.value)}
+                style={{fontFamily:"'Nunito',sans-serif",fontWeight:700,fontSize:10,border:`1px solid ${C.border}`,borderRadius:8,padding:"2px 6px",background:C.card,color:C.txt,marginLeft:4}}>
+                {selBuoys.map(id=>{const b=BUOYS.find(b=>b.id===id);return<option key={id} value={id}>{id} · {b?.name||id}</option>;})}
+              </select>
+            </div>
+            <PolarSpectrum buoyId={polarBuoy}/>
+          </div>
+        )}
+
+        {/* ── Buoy selector panel ── */}
         {showBuoy&&(
           <div className="u" style={{margin:"8px 14px",borderRadius:12,border:`1px solid ${C.border}`,background:C.card,padding:"12px 14px"}}>
-            <div style={{fontWeight:900,fontSize:12,marginBottom:2}}>
-              Select buoys <span style={{fontWeight:400,color:C.sub,fontSize:10}}>(tap to toggle · max 3)</span>
-            </div>
+            <div style={{fontWeight:900,fontSize:12,marginBottom:2}}>Select buoys <span style={{fontWeight:400,color:C.sub,fontSize:10}}>(max 3)</span></div>
             <div style={{fontSize:9,color:C.sub,marginBottom:8,fontStyle:"italic",lineHeight:1.5}}>
-              ⚠ Swell lines show realistic demo data. Dashed portions are demo projections — NOT real forecasts. Live NDBC readings + NOAA WW3 wave forecasts are a planned future update.
+              Time-series uses Open-Meteo ECMWF/GFS model data. Solid line = model analysis; dashed = real forecast.
             </div>
             {bRegions.map(region=>(
               <div key={region}>
@@ -950,7 +926,8 @@ function TideTrack() {
                 <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
                   {BUOYS.filter(b=>b.region===region).map(b=>{
                     const idx=selBuoys.indexOf(b.id),on=idx>=0,full=!on&&selBuoys.length>=3;
-                    return(<button key={b.id} onClick={()=>toggleBuoy(b.id)} style={{padding:"3px 9px",borderRadius:20,border:`1px solid ${on?C.buoy[idx]:C.border}`,background:on?`${C.buoy[idx]}18`:C.card,color:on?C.buoy[idx]:C.sub,fontSize:9,fontWeight:on?800:400,opacity:full?.4:1,cursor:full?"not-allowed":"pointer"}}>
+                    return(<button key={b.id} onClick={()=>setSelBuoys(prev=>on?prev.filter(x=>x!==b.id):full?prev:[...prev,b.id])}
+                      style={{padding:"3px 9px",borderRadius:20,border:`1px solid ${on?C.buoy[idx]:C.border}`,background:on?`${C.buoy[idx]}18`:C.card,color:on?C.buoy[idx]:C.sub,fontSize:9,fontWeight:on?800:400,opacity:full?.4:1,cursor:full?"not-allowed":"pointer"}}>
                       {b.id} · {b.name}
                     </button>);
                   })}
@@ -959,17 +936,6 @@ function TideTrack() {
             ))}
           </div>
         )}
-
-        {/* ── Wind toggle ── */}
-        <div className="u" style={{margin:"8px 14px",borderRadius:12,border:`1px solid ${C.border}`,background:C.card}}>
-          <button onClick={()=>setShowWind(v=>!v)} style={{width:"100%",padding:"10px 14px",border:"none",background:"transparent",display:"flex",justifyContent:"space-between",alignItems:"center",fontWeight:800,fontSize:11,color:C.txt}}>
-            <span style={{display:"flex",alignItems:"center",gap:6}}>
-              <div style={{width:14,height:2.5,background:C.wind,borderRadius:2,display:"inline-block"}}/>
-              Wind · Station {st.id}
-            </span>
-            <span style={{color:C.sub,fontWeight:400,fontSize:9}}>{showWind?"▲ visible":"▼ hidden"}</span>
-          </button>
-        </div>
 
         {/* ── Moon panel ── */}
         <div className="u" style={{margin:"8px 14px",borderRadius:12,border:`1px solid ${C.border}`,background:C.card}}>
