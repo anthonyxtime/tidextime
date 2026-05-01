@@ -439,7 +439,7 @@ function TideTrack(){
   const viewWRef   = useRef(440);
   const scrollRef  = useRef(0);
   const rafId      = useRef(null);
-  const traceActive= useRef(false); // tracks if a touch is currently tracing
+
 
   const st   = STATIONS[stIdx];
   const suns = [yestMid,todayMid,tmrwMid].map(d=>sunTimes(st.lat,st.lon,d));
@@ -522,44 +522,28 @@ function TideTrack(){
   //   touchstart → immediately update cursor (handles tap) + mark tracing active
   //   touchmove  → update cursor + preventDefault (blocks scroll)
   //   touchend   → mark tracing inactive
-  // This means: any touch anywhere on the chart = trace.
-  // Scroll only via bottom strip. No toggle button needed.
-  useEffect(()=>{
-    const el=svgAreaRef.current;if(!el)return;
+  // ── Touch trace helpers (used by React onTouchStart/onTouchMove props) ──
+  // The chart div has overflow:hidden so there is nothing to scroll inside it.
+  // We do NOT need preventDefault — React JSX touch props work fine without it.
+  // This avoids the passive-listener conflict that broke tracing in the previous version.
+  const getTouchAm=useCallback(touch=>{
+    const el=svgAreaRef.current;if(!el)return nowAM;
+    const rect=el.getBoundingClientRect();
+    const absX=touch.clientX-rect.left+scrollRef.current;
+    return Math.max(0,Math.min(N_DAYS*1440-1,Math.round((absX-L_PAD)*(1440/DAY_PX))));
+  },[nowAM]);
 
-    const getAm=touch=>{
-      const rect=el.getBoundingClientRect();
-      const absX=touch.clientX-rect.left+scrollRef.current;
-      return Math.max(0,Math.min(N_DAYS*1440-1,Math.round((absX-L_PAD)*(1440/DAY_PX))));
-    };
+  const onTouchStart=useCallback(e=>{
+    if(e.touches.length!==1)return;
+    setCursor(getTouchAm(e.touches[0]));
+  },[getTouchAm]);
 
-    const onStart=e=>{
-      if(e.touches.length!==1)return;
-      traceActive.current=true;
-      e.preventDefault();
-      setCursor(getAm(e.touches[0]));
-    };
-
-    const onMove=e=>{
-      if(!traceActive.current||e.touches.length!==1)return;
-      e.preventDefault();
-      const am=getAm(e.touches[0]);
-      if(rafId.current)cancelAnimationFrame(rafId.current);
-      rafId.current=requestAnimationFrame(()=>{setCursor(am);rafId.current=null;});
-    };
-
-    const onEnd=()=>{traceActive.current=false;};
-
-    // passive:false is required to allow preventDefault
-    el.addEventListener('touchstart',onStart,{passive:false});
-    el.addEventListener('touchmove', onMove, {passive:false});
-    el.addEventListener('touchend',  onEnd,  {passive:true});
-    return()=>{
-      el.removeEventListener('touchstart',onStart);
-      el.removeEventListener('touchmove', onMove);
-      el.removeEventListener('touchend',  onEnd);
-    };
-  },[]);
+  const onTouchMove=useCallback(e=>{
+    if(e.touches.length!==1)return;
+    const am=getTouchAm(e.touches[0]);
+    if(rafId.current)cancelAnimationFrame(rafId.current);
+    rafId.current=requestAnimationFrame(()=>{setCursor(am);rafId.current=null;});
+  },[getTouchAm]);
 
   // ── Desktop: smooth mousemove tracing ────────────────────────────
   const onMouseMove=useCallback(e=>{
@@ -775,7 +759,10 @@ function TideTrack(){
 
         {/* CHART — touch always traces, scroll via bottom strip only */}
         {hlPts&&(
-        <div ref={svgAreaRef} onMouseMove={onMouseMove}
+        <div ref={svgAreaRef}
+          onMouseMove={onMouseMove}
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
           style={{overflow:"hidden",background:C.bg,cursor:"crosshair",userSelect:"none"}}>
           <svg width="100%" height={SVG_H}
             viewBox={`${scrollOff} 0 ${vw} ${SVG_H}`}
@@ -1033,4 +1020,4 @@ function TideTrack(){
 ReactDOM.createRoot(document.getElementById('root')).render(<TideTrack/>);
 </script>
 </body>
-</htm
+</html>
