@@ -160,42 +160,60 @@ function interpLin(pts,am,field){
 }
 
 // ═══════════════════════════════════════════════════
-// NDBC BUOY FETCH
-// Source: https://www.ndbc.noaa.gov/data/realtime2/
-// Returns last 45 days of hourly standard met data.
-// Columns: YY MM DD hh mm WDIR WSPD GST WVHT DPD APD MWD ...
-// We extract: WVHT (m→ft), DPD (dominant period, s), MWD (degrees FROM)
-// Only rows where wave data is not "MM" (missing) are kept.
+// NDBC BUOY FETCH via NOAA ERDDAP
+// Source: https://coastwatch.pfeg.noaa.gov/erddap
+// ERDDAP is NOAA's data server — proper CORS headers,
+// designed for browser access, no proxy needed.
+// Dataset: cwwcNDBCMet (NDBC meteorological/wave obs)
+// Fields used:
+//   wvht = significant wave height (m → convert to ft)
+//   dpd  = dominant wave period (seconds) — most important surf metric
+//   mwd  = mean wave direction (degrees FROM)
 // ═══════════════════════════════════════════════════
 async function fetchNDBCBuoy(buoyId, yestMid){
-  // NDBC CORS proxy via allorigins (free public proxy)
-  const url=`https://www.ndbc.noaa.gov/data/realtime2/${buoyId}.txt`;
-  const proxy=`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-  const text=await fetch(proxy).then(r=>{
-    if(!r.ok)throw new Error(`NDBC ${buoyId} HTTP ${r.status}`);
-    return r.text();
+  // Build time range: yesterday midnight → 3 days later
+  const t0=yestMid.toISOString().slice(0,19)+'Z';
+  const t1=new Date(yestMid.getTime()+N_DAYS*86400000).toISOString().slice(0,19)+'Z';
+
+  const url=
+    `https://coastwatch.pfeg.noaa.gov/erddap/tabledap/cwwcNDBCMet.json`+
+    `?station%2Ctime%2Cwvht%2Cdpd%2Cmwd`+
+    `&station=%22${buoyId}%22`+
+    `&time%3E=${encodeURIComponent(t0)}`+
+    `&time%3C=${encodeURIComponent(t1)}`+
+    `&orderBy(%22time%22)`;
+
+  const data=await fetch(url).then(r=>{
+    if(!r.ok)throw new Error(`ERDDAP ${r.status} for buoy ${buoyId}`);
+    return r.json();
   });
-  const lines=text.split('\n').filter(l=>l&&!l.startsWith('#'));
-  const pts=[];
-  for(const line of lines){
-    const p=line.trim().split(/\s+/);
-    if(p.length<13)continue;
-    const yr=parseInt(p[0]),mo=parseInt(p[1]),dy=parseInt(p[2]),
-          hh=parseInt(p[3]),mm2=parseInt(p[4]);
-    const wvht=p[8],dpd=p[9],mwd=p[11];
-    if(wvht==='MM'||dpd==='MM')continue;
-    const dt=new Date(yr,mo-1,dy,hh,mm2,0);
-    const am=Math.round((dt-yestMid)/60000);
-    if(am<0||am>N_DAYS*1440)continue;
-    pts.push({
-      am,
-      wh: parseFloat(wvht)*3.28084,  // m → ft
-      period: parseFloat(dpd),        // dominant period (seconds)
-      dir: mwd==='MM'?270:parseFloat(mwd), // direction FROM (degrees)
-    });
-  }
-  if(!pts.length)throw new Error(`No wave data returned for buoy ${buoyId}`);
-  return pts.sort((a,b)=>a.am-b.am);
+
+  // ERDDAP JSON format: { table: { columnNames:[...], rows:[[...],[...]] } }
+  const cols=data.table?.columnNames;
+  const rows=data.table?.rows;
+  if(!cols||!rows?.length)throw new Error(`No ERDDAP data for buoy ${buoyId}`);
+
+  const iTime=cols.indexOf('time');
+  const iWvht=cols.indexOf('wvht');
+  const iDpd =cols.indexOf('dpd');
+  const iMwd =cols.indexOf('mwd');
+
+  const pts=rows
+    .filter(r=>r[iWvht]!=null&&r[iDpd]!=null)
+    .map(r=>{
+      const am=Math.round((new Date(r[iTime])-yestMid)/60000);
+      return{
+        am,
+        wh:  r[iWvht]*3.28084,         // m → ft
+        period: r[iDpd],               // dominant period (s)
+        dir: r[iMwd]??270,             // direction FROM (°), default W if missing
+      };
+    })
+    .filter(p=>p.am>=0&&p.am<=N_DAYS*1440)
+    .sort((a,b)=>a.am-b.am);
+
+  if(!pts.length)throw new Error(`ERDDAP returned no rows for buoy ${buoyId}`);
+  return pts;
 }
 
 // ═══════════════════════════════════════════════════
@@ -231,47 +249,63 @@ async function fetchWindForecast(lat,lon,yestMid){
 }
 
 // ═══════════════════════════════════════════════════
-// CDIP SPECTRUM FETCH
-// Source: https://thredds.cdip.ucsd.edu (OPeNDAP ASCII)
+// CDIP SPECTRUM FETCH via NOAA ERDDAP
+// Source: https://coastwatch.pfeg.noaa.gov/erddap
+// Dataset: cdipRtBuoy (CDIP realtime directional wave spectra)
+//
+// CDIP's own OPeNDAP server (thredds.cdip.ucsd.edu) has no
+// browser CORS headers — fetches always fail from a webpage.
+// ERDDAP mirrors the same data with proper CORS support.
+//
+// The spectral data is returned as 1D arrays that we reshape
+// into a frequency × direction energy matrix for the polar plot.
 // ═══════════════════════════════════════════════════
 async function fetchCDIPSpectrum(cdipStn){
-  const base=`https://thredds.cdip.ucsd.edu/thredds/dodsC/cdip/realtime/${cdipStn}p1_rt.nc`;
-  const ddsText=await fetch(`${base}.dds`).then(r=>{
-    if(!r.ok)throw new Error(`CDIP DDS ${r.status}`);
-    return r.text();
-  });
-  const match=ddsText.match(/waveTime\s*=\s*(\d+)/);
-  if(!match)throw new Error('CDIP DDS parse failed');
-  const N=parseInt(match[1]),last=N-1;
-  const query=`waveTime[${last}:${last}],waveFrequency[${last}:${last}][0:63],waveDirectionBins[${last}:${last}][0:71],waveEnergyDensity[${last}:${last}][0:63][0:71]`;
-  const ascii=await fetch(`${base}.ascii?${query}`).then(r=>{
-    if(!r.ok)throw new Error(`CDIP ASCII ${r.status}`);
-    return r.text();
-  });
-  return parseCDIPAscii(ascii);
-}
+  // ERDDAP query: most recent timestep of CDIP realtime buoy spectral data
+  const url=
+    `https://coastwatch.pfeg.noaa.gov/erddap/tabledap/cdipRtBuoy.json`+
+    `?station_name%2Ctime%2Cwave_energy_density%2Cwave_mean_direction%2Cwave_frequency`+
+    `&station_name=%22${cdipStn}%22`+
+    `&orderByMax(%22time%22)`;
 
-function parseCDIPAscii(txt){
-  const lines=txt.split('\n').map(l=>l.trim()).filter(l=>l);
-  let ds=0;for(let i=0;i<lines.length;i++){if(lines[i].startsWith('---')){ds=i+1;break;}}
-  const dl=lines.slice(ds);
-  function extractVar(name){
-    const rows=[];let in_=false;
-    for(const l of dl){
-      if(l.startsWith(name+',')||l.startsWith(name+' [')){in_=true;continue;}
-      if(in_){if(l.match(/^[a-zA-Z_]/))break;
-        const v=l.replace(/^\[[\d\]\[]+\],\s*/,'').split(',').map(x=>parseFloat(x.trim())).filter(x=>!isNaN(x));
-        if(v.length)rows.push(v);}
-    }
-    return rows;
-  }
-  const freqs=extractVar('waveFrequency').flat();
-  const dirs=extractVar('waveDirectionBins').flat();
-  const energy=extractVar('waveEnergyDensity');
-  const timeRows=extractVar('waveTime').flat();
-  if(!freqs.length||!dirs.length||!energy.length)throw new Error('CDIP parse failed');
-  const recTime=new Date((timeRows[0]??0)*1000);
-  return{freqs,dirs,energy,recTime};
+  const data=await fetch(url).then(r=>{
+    if(!r.ok)throw new Error(`ERDDAP CDIP ${r.status} for stn ${cdipStn}`);
+    return r.json();
+  });
+
+  const cols=data.table?.columnNames;
+  const rows=data.table?.rows;
+  if(!cols||!rows?.length)throw new Error(`No CDIP data for station ${cdipStn}`);
+
+  // Each row is one frequency bin: [stn, time, energy, meanDir, freq]
+  const iE   =cols.indexOf('wave_energy_density');
+  const iDir =cols.indexOf('wave_mean_direction');
+  const iFreq=cols.indexOf('wave_frequency');
+  const iTime=cols.indexOf('time');
+
+  if(iE<0||iFreq<0)throw new Error('CDIP ERDDAP columns not found');
+
+  // All rows share the same timestamp (most recent record)
+  const recTime=new Date(rows[0][iTime]);
+  const freqs=rows.map(r=>r[iFreq]).filter(v=>v!=null);
+  const meanDirs=rows.map(r=>r[iDir]??0);
+  const energyVec=rows.map(r=>r[iE]??0);
+
+  // ERDDAP returns integrated energy per frequency bin (not full 2D spectrum).
+  // We spread each frequency's energy across a gaussian in direction space
+  // centered on the mean direction — this reconstructs an approximate 2D spectrum.
+  const DIR_BINS=Array.from({length:24},(_,i)=>i*15); // 0,15,...,345°
+  const DIR_SPREAD=25; // degrees standard deviation
+
+  const energy=freqs.map((f,fi)=>{
+    const e=energyVec[fi], mDir=meanDirs[fi];
+    return DIR_BINS.map(d=>{
+      const diff=Math.min(Math.abs(d-mDir),360-Math.abs(d-mDir));
+      return e*Math.exp(-0.5*(diff/DIR_SPREAD)**2)/(DIR_SPREAD*Math.sqrt(2*Math.PI))*15;
+    });
+  });
+
+  return{freqs, dirs:DIR_BINS, energy, recTime};
 }
 
 // ═══════════════════════════════════════════════════
@@ -681,9 +715,9 @@ function TideTrack(){
         {/* Data source attribution */}
         <div style={{marginTop:6,fontSize:8,color:C.light,lineHeight:1.7}}>
           Tides: <a href="https://tidesandcurrents.noaa.gov" target="_blank" rel="noopener noreferrer">NOAA CO-OPS</a> ·
-          Buoy obs: <a href="https://www.ndbc.noaa.gov" target="_blank" rel="noopener noreferrer">NDBC</a> ·
+          Buoy obs: <a href="https://coastwatch.pfeg.noaa.gov/erddap" target="_blank" rel="noopener noreferrer">NOAA ERDDAP (NDBC)</a> ·
           Forecast: <a href="https://open-meteo.com" target="_blank" rel="noopener noreferrer">Open-Meteo (ECMWF)</a> ·
-          Spectrum: <a href="https://cdip.ucsd.edu" target="_blank" rel="noopener noreferrer">CDIP</a>
+          Spectrum: <a href="https://coastwatch.pfeg.noaa.gov/erddap" target="_blank" rel="noopener noreferrer">NOAA ERDDAP (CDIP)</a>
         </div>
       </div>
 
@@ -950,9 +984,9 @@ function TideTrack(){
           <div className="u" style={{margin:"8px 14px",borderRadius:12,border:`1px solid ${C.border}`,background:C.card,padding:"12px 14px"}}>
             <div style={{fontWeight:900,fontSize:12,marginBottom:2}}>Select buoys <span style={{fontWeight:400,color:C.sub,fontSize:10}}>(max 3)</span></div>
             <div style={{fontSize:9,color:C.sub,marginBottom:8,lineHeight:1.5}}>
-              Observed: <a href="https://www.ndbc.noaa.gov" target="_blank" rel="noopener noreferrer">NDBC</a> real-time ·
+              Observed: <a href="https://coastwatch.pfeg.noaa.gov/erddap" target="_blank" rel="noopener noreferrer">NOAA ERDDAP (NDBC data, CORS-enabled)</a> ·
               Forecast: <a href="https://open-meteo.com" target="_blank" rel="noopener noreferrer">Open-Meteo ECMWF</a> ·
-              Spectrum: <a href="https://cdip.ucsd.edu" target="_blank" rel="noopener noreferrer">CDIP OPeNDAP</a>
+              Spectrum: <a href="https://coastwatch.pfeg.noaa.gov/erddap" target="_blank" rel="noopener noreferrer">NOAA ERDDAP (CDIP)</a>
             </div>
             {bRegions.map(region=>(
               <div key={region}>
